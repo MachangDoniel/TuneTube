@@ -1,0 +1,54 @@
+{
+  "identifier" : "TUNETUBE_STOREKIT",
+  "nonRenewingSubscriptions" : [],
+  "products" : [
+    {
+      "displayPrice" : "14.99",
+      "familyShareable" : false,
+      "internalID" : "LIFETIME01",
+      "localizations" : [
+        {
+          "description" : "One-time payment for permanent Pro access.",
+          "displayName" : "Lifetime Pro",
+          "locale" : "en_GB"
+        }
+      ],
+      "productID" : "com.tunetube.pro.lifetime",
+      "referenceName" : "Lifetime Pro",
+      "type" : "NonConsumable"
+    }
+  ],
+  "settings" : {
+    "_storeKitErrors" : []
+  },
+  "subscriptionGroups" : [
+    {
+      "id" : "PROGROUP01",
+      "localizations" : [],
+      "name" : "Pro",
+      "subscriptions" : [
+        {
+          "adHocOffers" : [],
+          "displayPrice" : "1.99",
+          "familyShareable" : false,
+          "groupNumber" : 1,
+          "internalID" : "WEEKLY01",
+          "introductoryOffer" : null,
+          "localizations" : [
+            {
+              "description" : "Billed weekly.",
+              "displayName" : "Weekly Pro",
+              "locale" : "en_GB"
+            }
+          ],
+          "productID" : "com.tunetube.pro.weekly",
+          "recurringSubscriptionPeriod" : "P1W",
+          "referenceName" : "Weekly Pro",
+          "subscriptionGroupID" : "PROGROUP01",
+          "type" : "RecurringSubscription"
+        }
+      ]
+    }
+  ],
+  "version" : { "major" : 3, "minor" : 0 }
+}

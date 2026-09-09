@@ -1,0 +1,13 @@
+name = "tunetube-api"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+
+[vars]
+YTM_REGION = "US"
+YTM_LANG   = "en"
+
+# Create with: npx wrangler kv namespace create CACHE
+[[kv_namespaces]]
+binding = "CACHE"
+id = "PLACEHOLDER_REPLACE_AFTER_CREATE"
+preview_id = "PLACEHOLDER_PREVIEW"

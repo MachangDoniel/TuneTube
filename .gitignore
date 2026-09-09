@@ -1,0 +1,30 @@
+# ---- Xcode ----
+# The project is generated from project.yml by XcodeGen; regenerate with
+# `xcodegen generate` rather than committing the .xcodeproj.
+*.xcodeproj/
+*.xcworkspace/
+xcuserdata/
+DerivedData/
+build/
+*.xcuserstate
+*.moved-aside
+
+# ---- Swift Package Manager ----
+.swiftpm/
+.build/
+Package.resolved
+
+# ---- Node / Cloudflare Worker ----
+node_modules/
+.wrangler/
+dist/
+*.tsbuildinfo
+
+# ---- Env / local config ----
+.dev.vars
+.env
+.env.*
+
+# ---- macOS / misc ----
+.DS_Store
+*.log

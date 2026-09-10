@@ -63,6 +63,7 @@ final class PlayerEngine {
     private var cancellables = Set<AnyCancellable>()
     private var timeObserverToken: Any?
     private var currentLoadTask: Task<Void, Never>?
+    private var currentExpectedDuration: Double?
 
     /// Cached so we don't refetch lock-screen artwork on every Now Playing update.
     private var artworkCache: (id: String, artwork: MPMediaItemArtwork)?
@@ -102,9 +103,25 @@ final class PlayerEngine {
     }
 
     func next() {
-        guard index + 1 < queue.count else { return }
+        guard index + 1 < queue.count else {
+            pause()
+            if duration > 0 { currentTime = duration }
+            updateNowPlaying()
+            return
+        }
         index += 1
         loadCurrent()
+    }
+
+    func pause() {
+        intendedPlaying = false
+        if isNativeAVPlayer {
+            avPlayer.pause()
+        } else {
+            Task { try? await player.pause() }
+        }
+        isPlaying = false
+        updateNowPlaying()
     }
 
     func previous() {
@@ -123,7 +140,9 @@ final class PlayerEngine {
         isLoading = true
         intendedPlaying = true
         currentTime = 0
-        duration = Double(item.durationSeconds ?? 0)
+        let expDur = item.durationSeconds.flatMap { Double($0) } ?? 0
+        currentExpectedDuration = expDur > 0 ? expDur : nil
+        duration = expDur
         configureAudioSession()
         RecentStore.shared.record(item)
         updateNowPlaying()
@@ -161,6 +180,15 @@ final class PlayerEngine {
                     self.currentResolvedStreamURL = initialURL
                     self.currentResolvedItemID = item.id
 
+                    if self.currentExpectedDuration == nil {
+                        if let exp = await StreamResolver.shared.getExpectedDuration(for: item.id), exp > 0 {
+                            self.currentExpectedDuration = exp
+                            if self.duration <= 0 {
+                                self.duration = exp
+                            }
+                        }
+                    }
+
                     let playerItem = AVPlayerItem(url: initialURL)
                     playerItem.preferredForwardBufferDuration = 0
                     self.avPlayer.automaticallyWaitsToMinimizeStalling = true
@@ -179,17 +207,17 @@ final class PlayerEngine {
                                     guard let self, self.current?.id == item.id, self.isNativeAVPlayer else { return }
                                     self.currentResolvedStreamURL = savedURL
                                     let currentPos = self.currentTime
-                                    if currentPos > 0 {
-                                        let newItem = AVPlayerItem(url: savedURL)
-                                        let wasPlaying = self.isPlaying
-                                        self.avPlayer.replaceCurrentItem(with: newItem)
+                                    let wasPlaying = self.isPlaying
+                                    let newItem = AVPlayerItem(url: savedURL)
+                                    self.avPlayer.replaceCurrentItem(with: newItem)
+                                    if currentPos > 0.1 {
                                         self.avPlayer.seek(
                                             to: CMTime(seconds: currentPos, preferredTimescale: 600),
                                             toleranceBefore: .zero,
                                             toleranceAfter: .zero
                                         )
-                                        if wasPlaying { self.avPlayer.play() }
                                     }
+                                    if wasPlaying { self.avPlayer.play() }
                                 }
                             }
                         }
@@ -372,13 +400,31 @@ final class PlayerEngine {
                 guard let self, !self.isScrubbing, !self.isSeeking, self.isNativeAVPlayer else { return }
                 let seconds = time.seconds
                 if !seconds.isNaN && seconds >= 0 {
-                    self.currentTime = seconds
+                    if self.duration > 0 {
+                        self.currentTime = min(seconds, self.duration)
+                    } else {
+                        self.currentTime = seconds
+                    }
                 }
                 if let currentItem = self.avPlayer.currentItem {
                     let dur = currentItem.duration.seconds
                     if !dur.isNaN && dur > 0 {
-                        self.duration = dur
+                        // Guard against AVFoundation DASH fragmented MP4 double-counting bug (~2x)
+                        if let expected = self.currentExpectedDuration, expected > 0 {
+                            if dur > expected * 1.5 {
+                                self.duration = expected
+                            } else {
+                                self.duration = dur
+                            }
+                        } else {
+                            self.duration = dur
+                        }
                     }
+                }
+
+                // Dual-guarantee auto-advance at the end of track
+                if self.duration > 0, self.currentTime >= self.duration - 0.5, self.isPlaying {
+                    self.next()
                 }
                 if self.avPlayer.timeControlStatus == .playing {
                     self.isPlaying = true

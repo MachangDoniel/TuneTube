@@ -56,8 +56,9 @@ struct RootView: View {
             let title = components.queryItems?.first(where: { $0.name == "title" })?.value ?? "Now Playing"
             let artist = components.queryItems?.first(where: { $0.name == "artist" })?.value ?? ""
             let thumb = components.queryItems?.first(where: { $0.name == "thumb" })?.value.flatMap(URL.init(string:))
+            let dur = components.queryItems?.first(where: { $0.name == "duration" })?.value.flatMap(Int.init)
             guard !id.isEmpty else { return }
-            let item = MediaItem(id: id, kind: .song, title: title, thumbnailUrl: thumb, artistName: artist.isEmpty ? nil : artist)
+            let item = MediaItem(id: id, kind: .song, title: title, thumbnailUrl: thumb, durationSeconds: dur, artistName: artist.isEmpty ? nil : artist)
             navigator.open(item, within: [item], player: player)
         case "tab":
             if let name = components.queryItems?.first(where: { $0.name == "name" })?.value {

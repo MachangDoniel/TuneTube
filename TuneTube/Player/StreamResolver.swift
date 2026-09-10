@@ -19,17 +19,86 @@ actor StreamResolver {
     }()
 
     private var cache: [String: CachedStream] = [:]
+    private var durations: [String: Double] = [:]
 
     private init() {}
+
+    func getExpectedDuration(for videoID: String) -> Double? {
+        durations[videoID]
+    }
 
     /// Checks if a complete audio file for `videoID` is already cached on disk.
     func getCachedAudioFileURL(for videoID: String) -> URL? {
         let fileURL = cacheDirectory.appendingPathComponent("\(videoID).m4a")
         if let attrs = try? FileManager.default.attributesOfItem(atPath: fileURL.path),
            let size = attrs[.size] as? UInt64, size > 100_000 {
+            sanitizeFragmentedMP4(at: fileURL)
             return fileURL
         }
         return nil
+    }
+
+    /// Sanitizes YouTube fragmented MP4 files by zeroing out the initial movie header (`mvhd`, `tkhd`, `mdhd`) duration.
+    /// YouTube serves DASH audio files where `moov` has duration D and the fragments have duration D.
+    /// Without this, Apple AVFoundation sums the moov duration and fragment durations, incorrectly reporting
+    /// 2x duration (e.g. 9:23 instead of 4:41), causing the UI progress bar to end at 50% and stall silently.
+    @discardableResult
+    func sanitizeFragmentedMP4(at fileURL: URL) -> Bool {
+        guard let handle = try? FileHandle(forUpdating: fileURL) else { return false }
+        defer { try? handle.close() }
+
+        guard let data = try? handle.read(upToCount: 32768), data.count > 100 else { return false }
+
+        func findBox(_ name: String, in bytes: Data) -> Int? {
+            let target = Array(name.utf8)
+            guard target.count == 4 else { return nil }
+            var i = 0
+            while i <= bytes.count - 4 {
+                if bytes[i] == target[0] && bytes[i+1] == target[1] && bytes[i+2] == target[2] && bytes[i+3] == target[3] {
+                    return i
+                }
+                i += 1
+            }
+            return nil
+        }
+
+        // Only patch if this is a fragmented MP4 (contains mvex or moof)
+        guard findBox("mvex", in: data) != nil || findBox("moof", in: data) != nil else {
+            return false
+        }
+
+        var patched = false
+        let zeroFourBytes = Data(repeating: 0, count: 4)
+        let zeroEightBytes = Data(repeating: 0, count: 8)
+
+        // 1. mvhd
+        if let pos = findBox("mvhd", in: data), pos + 4 < data.count {
+            let ver = data[pos + 4]
+            let offset = UInt64(pos + 4 + (ver == 0 ? 16 : 24))
+            try? handle.seek(toOffset: offset)
+            try? handle.write(contentsOf: ver == 0 ? zeroFourBytes : zeroEightBytes)
+            patched = true
+        }
+
+        // 2. tkhd
+        if let pos = findBox("tkhd", in: data), pos + 4 < data.count {
+            let ver = data[pos + 4]
+            let offset = UInt64(pos + 4 + (ver == 0 ? 20 : 28))
+            try? handle.seek(toOffset: offset)
+            try? handle.write(contentsOf: ver == 0 ? zeroFourBytes : zeroEightBytes)
+            patched = true
+        }
+
+        // 3. mdhd
+        if let pos = findBox("mdhd", in: data), pos + 4 < data.count {
+            let ver = data[pos + 4]
+            let offset = UInt64(pos + 4 + (ver == 0 ? 16 : 24))
+            try? handle.seek(toOffset: offset)
+            try? handle.write(contentsOf: ver == 0 ? zeroFourBytes : zeroEightBytes)
+            patched = true
+        }
+
+        return patched
     }
 
     /// Downloads the full audio track to disk in the background.
@@ -38,6 +107,7 @@ actor StreamResolver {
         let destinationURL = cacheDirectory.appendingPathComponent("\(videoID).m4a")
         if let attrs = try? FileManager.default.attributesOfItem(atPath: destinationURL.path),
            let size = attrs[.size] as? UInt64, size > 100_000 {
+            sanitizeFragmentedMP4(at: destinationURL)
             return destinationURL
         }
 
@@ -53,6 +123,7 @@ actor StreamResolver {
 
                 if let attrs = try? FileManager.default.attributesOfItem(atPath: destinationURL.path),
                    let size = attrs[.size] as? UInt64, size > 100_000 {
+                    sanitizeFragmentedMP4(at: destinationURL)
                     cleanOldCacheIfNeeded()
                     return destinationURL
                 }
@@ -156,6 +227,13 @@ actor StreamResolver {
             url: url,
             expiresAt: Date().addingTimeInterval(3 * 3600)
         )
+
+        // Extract exact duration from Google CDN signed query parameter &dur=<seconds>
+        if let comps = URLComponents(url: url, resolvingAgainstBaseURL: false),
+           let durVal = comps.queryItems?.first(where: { $0.name == "dur" })?.value,
+           let durSec = Double(durVal), durSec > 0 {
+            durations[videoID] = durSec
+        }
     }
 
     private func cleanOldCacheIfNeeded() {

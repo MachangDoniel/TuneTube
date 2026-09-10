@@ -87,6 +87,11 @@ struct RootView: View {
             player.forward10()
         case "backward10":
             player.backward10()
+        case "seek":
+            if let toStr = components.queryItems?.first(where: { $0.name == "to" })?.value,
+               let seconds = Double(toStr) {
+                player.seek(to: seconds)
+            }
         default:
             break
         }

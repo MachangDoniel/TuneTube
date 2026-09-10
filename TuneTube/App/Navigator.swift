@@ -1,6 +1,11 @@
 import Foundation
 import SwiftUI
 
+enum PlayerDisplayMode: String, CaseIterable, Sendable {
+    case song = "Song"
+    case video = "Video"
+}
+
 enum Tab: Hashable { case home, search, library, profile }
 
 enum Route: Hashable {
@@ -15,34 +20,44 @@ enum Route: Hashable {
 @Observable
 final class Navigator {
     var selectedTab: Tab = .home
-    var paths: [Tab: [Route]] = [.home: [], .search: [], .library: [], .profile: []]
+    var homePath: [Route] = []
+    var searchPath: [Route] = []
+    var libraryPath: [Route] = []
+    var profilePath: [Route] = []
 
     /// Signed-out placeholder; replaced by the account name once auth lands.
     var userFirstName = "there"
 
     var showPlayer = false
+    var playerDisplayMode: PlayerDisplayMode = .song
 
     /// "Go to Artist" from the player: songs carry an artist name but no artist
     /// browseId, so we hand the name to Search to resolve.
     var pendingArtistSearch: String?
 
     func push(_ route: Route) {
-        paths[selectedTab, default: []].append(route)
-    }
-
-    func path(for tab: Tab) -> Binding<[Route]> {
-        Binding(
-            get: { self.paths[tab] ?? [] },
-            set: { self.paths[tab] = $0 }
-        )
+        switch selectedTab {
+        case .home: homePath.append(route)
+        case .search: searchPath.append(route)
+        case .library: libraryPath.append(route)
+        case .profile: profilePath.append(route)
+        }
     }
 
     /// Single entry point for "user tapped a card". Playable items start
     /// playback in the context of their shelf; containers push a detail screen.
-    func open(_ item: MediaItem, within context: [MediaItem] = [], player: PlayerEngine) {
+    func open(_ item: MediaItem, within context: [MediaItem] = [], player: PlayerEngine? = nil) {
+        let activePlayer = player ?? PlayerEngine.shared
         switch item.kind {
-        case .song, .video:
-            player.play(item, in: context)
+        case .song:
+            playerDisplayMode = .song
+            activePlayer.displayMode = .song
+            activePlayer.play(item, in: context)
+            showPlayer = true
+        case .video:
+            playerDisplayMode = .video
+            activePlayer.displayMode = .video
+            activePlayer.play(item, in: context)
             showPlayer = true
         case .artist:
             push(.artist(id: item.id, name: item.title))

@@ -2,9 +2,10 @@ import SwiftUI
 
 struct HomeView: View {
     @State private var model = HomeViewModel()
-    @Environment(PlayerEngine.self) private var player
     @Environment(Navigator.self) private var navigator
     @Environment(AuthService.self) private var auth
+
+    private var recentStore = RecentStore.shared
 
     var body: some View {
         ScrollView {
@@ -15,6 +16,10 @@ struct HomeView: View {
                     .padding(.horizontal, 16)
                     .padding(.top, 8)
 
+                if !recentStore.items.isEmpty {
+                    recentlyPlayedSection
+                }
+
                 if model.shelves.isEmpty, model.isLoading {
                     ForEach(0..<3, id: \.self) { _ in ShelfSkeleton() }
                 } else if let error = model.errorMessage, model.shelves.isEmpty {
@@ -22,16 +27,43 @@ struct HomeView: View {
                 } else {
                     ForEach(model.shelves) { shelf in
                         ShelfRow(shelf: shelf) { item in
-                            navigator.open(item, within: shelf.items, player: player)
+                            navigator.open(item, within: shelf.items)
                         }
                     }
                 }
             }
+            .frame(maxWidth: .infinity)
             .padding(.bottom, 24)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .screenBackground()
-        .task { await model.loadIfNeeded() }
-        .refreshable { await model.load() }
+        .task {
+            await model.loadIfNeeded()
+        }
+        .refreshable {
+            recentStore.load()
+            await model.load()
+        }
+    }
+
+    private var recentlyPlayedSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Recently Played")
+                .font(.system(size: 19, weight: .bold))
+                .foregroundStyle(Theme.textPrimary)
+                .padding(.horizontal, 16)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(spacing: 12) {
+                    ForEach(recentStore.items) { item in
+                        RecentMediaCard(item: item) {
+                            navigator.open(item, within: recentStore.items)
+                        }
+                    }
+                }
+                .padding(.horizontal, 16)
+            }
+        }
     }
 }
 

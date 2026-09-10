@@ -94,7 +94,16 @@ struct PaywallView: View {
         .padding(.horizontal, 24)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(Theme.background.ignoresSafeArea())
-        .task { await store.bootstrap() }
+        .task {
+            await store.bootstrap()
+            if store.isPro { dismiss() }
+        }
+        .onAppear {
+            if store.isPro { dismiss() }
+        }
+        .onChange(of: store.isPro) { _, isPro in
+            if isPro { dismiss() }
+        }
     }
 
     private func buy() async {

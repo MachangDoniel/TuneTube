@@ -25,9 +25,11 @@ struct SearchView: View {
                     }
                 }
             }
+            .frame(maxWidth: .infinity)
             .padding(.top, 8)
             .padding(.bottom, 24)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .screenBackground()
         .task {
             await model.loadConfig()

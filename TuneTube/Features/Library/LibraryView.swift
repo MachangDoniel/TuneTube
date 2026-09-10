@@ -10,7 +10,7 @@ struct LibraryView: View {
 
     @State private var showPaywall = false
     @State private var showNewPlaylist = false
-    @State private var newPlaylistName = ""
+    @State private var playlistToEdit: LocalPlaylist?
     @State private var freeLimit = RemoteConfig.fallback.freePlaylistLimit
 
     private var library: LibraryStore { LibraryStore(context: context) }
@@ -38,6 +38,10 @@ struct LibraryView: View {
                                     library.delete(playlist)
                                 } label: { Label("Delete", systemImage: "trash") }
                             }
+                            Button {
+                                playlistToEdit = playlist
+                            } label: { Label("Edit", systemImage: "pencil") }
+                            .tint(Theme.accent)
                         }
                     }
                 }
@@ -57,13 +61,14 @@ struct LibraryView: View {
             PaywallView().environment(store)
                 .presentationDetents([.height(560)])
         }
-        .alert("New Playlist", isPresented: $showNewPlaylist) {
-            TextField("Playlist name", text: $newPlaylistName)
-            Button("Cancel", role: .cancel) { newPlaylistName = "" }
-            Button("Create") {
-                let name = newPlaylistName.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !name.isEmpty { library.createPlaylist(named: name) }
-                newPlaylistName = ""
+        .sheet(isPresented: $showNewPlaylist) {
+            PlaylistCustomizationSheet(defaultColorHex: library.distinctColor(for: "heart.fill")) { name, icon, color in
+                library.createPlaylist(named: name, iconName: icon, colorHex: color)
+            }
+        }
+        .sheet(item: $playlistToEdit) { playlist in
+            PlaylistCustomizationSheet(playlist: playlist) { name, icon, color in
+                library.updatePlaylist(playlist, name: name, iconName: icon, colorHex: color)
             }
         }
     }
@@ -104,12 +109,15 @@ struct LibraryView: View {
     }
 
     private func playlistRow(_ playlist: LocalPlaylist) -> some View {
-        HStack(spacing: 12) {
-            Image(systemName: playlist.isDefault ? "heart.fill" : "music.note.list")
-                .font(.system(size: 18))
-                .foregroundStyle(playlist.isDefault ? .pink : Theme.accent)
+        let icon = playlist.iconName.isEmpty ? (playlist.isDefault ? "heart.fill" : "music.note.list") : playlist.iconName
+        let color = Color(hex: playlist.colorHex.isEmpty ? (playlist.isDefault ? "#FF2D55" : "#AF52DE") : playlist.colorHex)
+
+        return HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 20))
+                .foregroundStyle(color)
                 .frame(width: 46, height: 46)
-                .background(Theme.surface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .background(color.opacity(0.15), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(playlist.name)
@@ -146,5 +154,6 @@ struct LibraryView: View {
             Spacer()
             Spacer()
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

@@ -15,6 +15,48 @@ struct MediaItem: Identifiable, Codable, Hashable, Sendable {
     let artistName: String?
     let albumName: String?
 
+    init(
+        id: String,
+        kind: MediaKind,
+        title: String,
+        subtitle: String? = nil,
+        thumbnailUrl: URL? = nil,
+        durationSeconds: Int? = nil,
+        playlistId: String? = nil,
+        artistName: String? = nil,
+        albumName: String? = nil
+    ) {
+        self.id = id
+        self.kind = kind
+        self.title = title
+        self.subtitle = subtitle
+        self.thumbnailUrl = thumbnailUrl
+        self.durationSeconds = durationSeconds
+        self.playlistId = playlistId
+        self.artistName = artistName
+        self.albumName = albumName
+    }
+
+    /// Full-resolution artwork URL.
+    /// Upscales Google / YouTube Music thumbnails to 544x544 for crystal-clear display on large screens,
+    /// and falls back to standard YouTube thumbnail if none was provided.
+    var effectiveThumbnailUrl: URL? {
+        if let thumbnailUrl {
+            let str = thumbnailUrl.absoluteString
+            if str.contains("googleusercontent.com") {
+                let upscaled = str
+                    .replacingOccurrences(of: "=w\\d+-h\\d+", with: "=w544-h544", options: .regularExpression)
+                    .replacingOccurrences(of: "=s\\d+", with: "=s544", options: .regularExpression)
+                return URL(string: upscaled) ?? thumbnailUrl
+            }
+            return thumbnailUrl
+        }
+        if !id.isEmpty && (kind == .song || kind == .video) {
+            return URL(string: "https://i.ytimg.com/vi/\(id)/hqdefault.jpg")
+        }
+        return nil
+    }
+
     /// Artist pages show the album under the track; everywhere else the artist
     /// reads better. The server sends both so the client can choose.
     func displaySubtitle(preferring preference: SubtitlePreference = .automatic) -> String? {

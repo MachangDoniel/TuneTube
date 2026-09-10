@@ -12,15 +12,19 @@ final class LocalPlaylist {
     var name: String = ""
     var createdAt: Date = Date()
     var isDefault: Bool = false
+    var iconName: String = "heart.fill"
+    var colorHex: String = "#FF2D55"
 
     @Relationship(deleteRule: .cascade, inverse: \LocalTrack.playlist)
     var tracks: [LocalTrack] = []
 
-    init(name: String, isDefault: Bool = false) {
+    init(name: String, isDefault: Bool = false, iconName: String = "heart.fill", colorHex: String = "#FF2D55") {
         self.id = UUID()
         self.name = name
         self.createdAt = Date()
         self.isDefault = isDefault
+        self.iconName = iconName
+        self.colorHex = colorHex
     }
 
     var orderedTracks: [LocalTrack] {

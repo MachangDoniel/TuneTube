@@ -54,13 +54,58 @@ struct PlaylistView: View {
                         }
                     }
                 } else if model.isLoading {
-                    ProgressView().tint(Theme.textSecondary).padding(.top, 40)
+                    VStack(spacing: 8) {
+                        ForEach(0..<6, id: \.self) { _ in
+                            PlaylistTrackSkeleton()
+                        }
+                    }
+                    .padding(.top, 12)
+                } else {
+                    VStack(spacing: 12) {
+                        Image(systemName: "music.note.list")
+                            .font(.system(size: 38))
+                            .foregroundStyle(Theme.textSecondary)
+                        Text("No songs available")
+                            .font(.system(size: 15))
+                            .foregroundStyle(Theme.textSecondary)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 40)
                 }
             }
+            .frame(maxWidth: .infinity)
             .padding(.bottom, 24)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .screenBackground()
         .navigationBarTitleDisplayMode(.inline)
         .task { await model.load(playlistId) }
+    }
+}
+
+struct PlaylistTrackSkeleton: View {
+    @State private var pulse = false
+
+    var body: some View {
+        HStack(spacing: 12) {
+            RoundedRectangle(cornerRadius: 6)
+                .fill(Theme.surface)
+                .frame(width: 46, height: 46)
+
+            VStack(alignment: .leading, spacing: 6) {
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(Theme.surface)
+                    .frame(width: 160, height: 14)
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(Theme.surface)
+                    .frame(width: 100, height: 12)
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 6)
+        .opacity(pulse ? 0.45 : 0.85)
+        .animation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true), value: pulse)
+        .onAppear { pulse = true }
     }
 }

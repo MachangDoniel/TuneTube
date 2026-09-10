@@ -17,15 +17,24 @@ struct LocalPlaylistView: View {
 
     private var playlist: LocalPlaylist? { playlists.first }
     private var library: LibraryStore { LibraryStore(context: context) }
+    @State private var showEditSheet = false
 
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
-                Image(systemName: (playlist?.isDefault ?? false) ? "heart.fill" : "music.note.list")
-                    .font(.system(size: 48))
-                    .foregroundStyle((playlist?.isDefault ?? false) ? .pink : Theme.accent)
+                let icon = playlist?.iconName.isEmpty == false ? playlist!.iconName : ((playlist?.isDefault ?? false) ? "heart.fill" : "music.note.list")
+                let color = Color(hex: playlist?.colorHex.isEmpty == false ? playlist!.colorHex : ((playlist?.isDefault ?? false) ? "#FF2D55" : "#AF52DE"))
+
+                Image(systemName: icon)
+                    .font(.system(size: 52))
+                    .foregroundStyle(color)
                     .frame(width: 160, height: 160)
-                    .background(Theme.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .background(color.opacity(0.15), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .stroke(color.opacity(0.35), lineWidth: 1.5)
+                    )
+                    .shadow(color: color.opacity(0.2), radius: 12, y: 4)
                     .padding(.top, 8)
 
                 Text(playlist?.name ?? "")
@@ -35,11 +44,16 @@ struct LocalPlaylistView: View {
                 let tracks = playlist?.orderedTracks ?? []
 
                 if tracks.isEmpty {
-                    Text("No songs yet.\nUse “Add to Playlist” from any track.")
-                        .font(.system(size: 14))
-                        .foregroundStyle(Theme.textSecondary)
-                        .multilineTextAlignment(.center)
-                        .padding(.top, 40)
+                    VStack(spacing: 8) {
+                        Text("No songs yet.")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(Theme.textPrimary)
+                        Text("Use “Add to Playlist” from any track.")
+                            .font(.system(size: 14))
+                            .foregroundStyle(Theme.textSecondary)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 40)
                 } else {
                     Button {
                         let items = tracks.map(\.asMediaItem)
@@ -69,9 +83,31 @@ struct LocalPlaylistView: View {
                     }
                 }
             }
+            .frame(maxWidth: .infinity)
             .padding(.bottom, 24)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .screenBackground()
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if let p = playlist, !p.isDefault {
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        showEditSheet = true
+                    } label: {
+                        Text("Edit")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(Theme.accent)
+                    }
+                }
+            }
+        }
+        .sheet(isPresented: $showEditSheet) {
+            if let p = playlist {
+                PlaylistCustomizationSheet(playlist: p) { name, icon, color in
+                    library.updatePlaylist(p, name: name, iconName: icon, colorHex: color)
+                }
+            }
+        }
     }
 }

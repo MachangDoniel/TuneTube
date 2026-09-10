@@ -40,7 +40,12 @@ struct ArtistView: View {
                 }
 
                 if model.isLoading && model.detail == nil {
-                    ProgressView().tint(Theme.textSecondary).padding(.top, 40)
+                    VStack(spacing: 8) {
+                        ForEach(0..<5, id: \.self) { _ in
+                            PlaylistTrackSkeleton()
+                        }
+                    }
+                    .padding(.top, 16)
                 }
 
                 ForEach(model.detail?.shelves ?? []) { shelf in
@@ -68,8 +73,10 @@ struct ArtistView: View {
                     }
                 }
             }
+            .frame(maxWidth: .infinity)
             .padding(.bottom, 24)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .screenBackground()
         .navigationBarTitleDisplayMode(.inline)
         .task { await model.load(browseId) }

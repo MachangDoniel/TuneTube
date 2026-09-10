@@ -102,12 +102,14 @@ fileprivate extension UIImage {
 /// Drop-in replacement for `AsyncImage` that renders cached images immediately.
 struct CachedImage<Placeholder: View>: View {
     private let url: URL?
+    private let contentMode: ContentMode
     private let placeholder: () -> Placeholder
 
     @State private var image: UIImage?
 
-    init(url: URL?, @ViewBuilder placeholder: @escaping () -> Placeholder) {
+    init(url: URL?, contentMode: ContentMode = .fill, @ViewBuilder placeholder: @escaping () -> Placeholder) {
         self.url = url
+        self.contentMode = contentMode
         self.placeholder = placeholder
         // Seed from the cache during init so a warm image is on screen for the
         // first frame — no placeholder, no fade, no flicker.
@@ -119,16 +121,24 @@ struct CachedImage<Placeholder: View>: View {
             if let image {
                 Image(uiImage: image)
                     .resizable()
-                    .aspectRatio(contentMode: .fill)
+                    .aspectRatio(contentMode: contentMode)
+                    .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
             } else {
                 placeholder()
             }
         }
         .task(id: url) {
-            guard image == nil, let url else { return }
-            let loaded = await ImageLoader.shared.image(for: url)
-            // Only adopt it if this view still wants this URL (cells get reused).
-            if !Task.isCancelled { image = loaded }
+            // Update immediately if the new URL is already warm in cache
+            let cached = url.flatMap { ImageLoader.shared.cached($0) }
+            image = cached
+            guard let url else { return }
+            if cached == nil {
+                let loaded = await ImageLoader.shared.image(for: url)
+                if !Task.isCancelled { image = loaded }
+            }
+        }
+        .onChange(of: url) { _, newURL in
+            image = newURL.flatMap { ImageLoader.shared.cached($0) }
         }
     }
 }

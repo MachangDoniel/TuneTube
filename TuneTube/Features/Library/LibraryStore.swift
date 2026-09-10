@@ -37,11 +37,44 @@ struct LibraryStore {
     }
 
     @discardableResult
-    func createPlaylist(named name: String) -> LocalPlaylist {
-        let playlist = LocalPlaylist(name: name)
+    func createPlaylist(
+        named name: String,
+        iconName: String = "heart.fill",
+        colorHex: String? = nil
+    ) -> LocalPlaylist {
+        let chosenColor = colorHex ?? distinctColor(for: iconName)
+        let playlist = LocalPlaylist(name: name, isDefault: false, iconName: iconName, colorHex: chosenColor)
         context.insert(playlist)
         try? context.save()
         return playlist
+    }
+
+    func updatePlaylist(_ playlist: LocalPlaylist, name: String, iconName: String, colorHex: String) {
+        playlist.name = name
+        playlist.iconName = iconName
+        playlist.colorHex = colorHex
+        try? context.save()
+    }
+
+    func distinctColor(for icon: String) -> String {
+        let palette = [
+            "#FF2D55", // Pink
+            "#AF52DE", // Purple
+            "#007AFF", // Blue
+            "#FF9500", // Orange
+            "#34C759", // Green
+            "#30B0C7", // Teal
+            "#FF3B30", // Red
+            "#FFCC00", // Yellow
+            "#5856D6"  // Indigo
+        ]
+        let usedColors = Set(allPlaylists().map(\.colorHex))
+        for color in palette {
+            if !usedColors.contains(color) {
+                return color
+            }
+        }
+        return palette[allPlaylists().count % palette.count]
     }
 
     func delete(_ playlist: LocalPlaylist) {

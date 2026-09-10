@@ -110,21 +110,15 @@ struct ProfileView: View {
 
             SignInWithAppleButton(.signIn) { request in
                 request.requestedScopes = [.fullName, .email]
-            } onCompletion: { _ in
-                // Handled by AuthService's own controller so the credential and
-                // its Keychain persistence live in one place.
+            } onCompletion: { result in
+                auth.handleAppleSignIn(result: result)
             }
             .signInWithAppleButtonStyle(.white)
             .frame(height: 48)
             .clipShape(Capsule())
-            .allowsHitTesting(false)
-            .overlay(
-                Button { Task { await auth.signInWithApple() } } label: {
-                    Color.clear
-                }
-                .accessibilityLabel("Sign in with Apple")
-            )
 
+            // Google sign in commented out as requested
+            /*
             Button { Task { await auth.signInWithGoogle() } } label: {
                 HStack(spacing: 10) {
                     Image(systemName: "g.circle.fill")
@@ -139,6 +133,7 @@ struct ProfileView: View {
                 .overlay(Capsule().stroke(Color.white.opacity(0.10), lineWidth: 1))
             }
             .disabled(auth.isBusy)
+            */
         }
         .padding(.horizontal, 24)
     }

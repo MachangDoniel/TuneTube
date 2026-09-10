@@ -9,6 +9,9 @@ packages:
   YouTubePlayerKit:
     url: https://github.com/SvenTiigi/YouTubePlayerKit
     from: 2.0.0
+  YouTubeKit:
+    url: https://github.com/alexeichhorn/YouTubeKit
+    from: 0.4.9
 
 schemes:
   TuneTube:
@@ -27,12 +30,14 @@ targets:
       - path: TuneTube
     dependencies:
       - package: YouTubePlayerKit
+      - package: YouTubeKit
     settings:
       base:
         # Dev API host. `localhost` only works in the Simulator — a real device
         # resolves localhost to itself. The Mac's Bonjour name works for both and
         # survives DHCP changes. Point this at your deployed Worker for release.
         API_BASE_URL: http://Doniels-MacBook-Air.local:8799
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         PRODUCT_BUNDLE_IDENTIFIER: com.tunetube.app
         MARKETING_VERSION: "1.0.0"
         CURRENT_PROJECT_VERSION: "1"

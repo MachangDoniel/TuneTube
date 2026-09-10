@@ -13,7 +13,6 @@ struct AddToPlaylistSheet: View {
 
     @State private var showPaywall = false
     @State private var showNewPlaylist = false
-    @State private var newPlaylistName = ""
     @State private var freeLimit = RemoteConfig.fallback.freePlaylistLimit
 
     private var library: LibraryStore { LibraryStore(context: context) }
@@ -23,13 +22,16 @@ struct AddToPlaylistSheet: View {
             List {
                 Section {
                     ForEach(playlists) { playlist in
+                        let icon = playlist.iconName.isEmpty ? (playlist.isDefault ? "heart.fill" : "music.note.list") : playlist.iconName
+                        let color = Color(hex: playlist.colorHex.isEmpty ? (playlist.isDefault ? "#FF2D55" : "#AF52DE") : playlist.colorHex)
+
                         Button {
                             library.add(item, to: playlist)
                             dismiss()
                         } label: {
                             HStack {
-                                Image(systemName: playlist.isDefault ? "heart.fill" : "music.note.list")
-                                    .foregroundStyle(playlist.isDefault ? .pink : Theme.accent)
+                                Image(systemName: icon)
+                                    .foregroundStyle(color)
                                     .frame(width: 26)
                                 Text(playlist.name).foregroundStyle(Theme.textPrimary)
                                 Spacer()
@@ -76,17 +78,11 @@ struct AddToPlaylistSheet: View {
         .sheet(isPresented: $showPaywall) {
             PaywallView().environment(store).presentationDetents([.height(560)])
         }
-        .alert("New Playlist", isPresented: $showNewPlaylist) {
-            TextField("Playlist name", text: $newPlaylistName)
-            Button("Cancel", role: .cancel) { newPlaylistName = "" }
-            Button("Create") {
-                let name = newPlaylistName.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !name.isEmpty {
-                    let playlist = library.createPlaylist(named: name)
-                    library.add(item, to: playlist)
-                    newPlaylistName = ""
-                    dismiss()
-                }
+        .sheet(isPresented: $showNewPlaylist) {
+            PlaylistCustomizationSheet(defaultColorHex: library.distinctColor(for: "heart.fill")) { name, icon, color in
+                let playlist = library.createPlaylist(named: name, iconName: icon, colorHex: color)
+                library.add(item, to: playlist)
+                dismiss()
             }
         }
     }

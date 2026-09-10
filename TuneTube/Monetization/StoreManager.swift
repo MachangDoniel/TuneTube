@@ -18,6 +18,8 @@ final class StoreManager {
     }
 
     private(set) var products: [Product] = []
+    private(set) var hasLifetime: Bool
+    private(set) var subscriptionExpiry: Date?
     private(set) var isPro: Bool
     private(set) var isPurchasing = false
     private(set) var lastError: String?
@@ -25,6 +27,8 @@ final class StoreManager {
     /// Lives for the app's lifetime (this is a singleton), so it is never cancelled.
     private var updatesTask: Task<Void, Never>?
     private static let cacheKey = "tunetube.isPro"
+    private static let lifetimeKey = "tunetube.hasLifetime"
+    private static let expiryKey = "tunetube.subscriptionExpiry"
 
     /// DEBUG-only entitlement override. StoreKit configuration files only apply
     /// when the app is launched from Xcode's scheme, so `simctl` runs can never
@@ -39,16 +43,25 @@ final class StoreManager {
     }
 
     private init() {
-        isPro = Self.forcedPro || UserDefaults.standard.bool(forKey: Self.cacheKey)
+        let cachedLifetime = UserDefaults.standard.bool(forKey: Self.lifetimeKey)
+        let cachedExpiryInterval = UserDefaults.standard.double(forKey: Self.expiryKey)
+        let cachedExpiry = cachedExpiryInterval > 0 ? Date(timeIntervalSince1970: cachedExpiryInterval) : nil
+        let hasActiveSub = cachedExpiry != nil && cachedExpiry! > Date()
+        let cachedPro = UserDefaults.standard.bool(forKey: Self.cacheKey)
+
+        self.hasLifetime = cachedLifetime
+        self.subscriptionExpiry = cachedExpiry
+        self.isPro = Self.forcedPro || cachedLifetime || hasActiveSub || cachedPro
+
         // Must start at launch, not at paywall presentation: this is how we hear
         // about renewals, Ask-to-Buy approvals and refunds that happen offscreen.
         updatesTask = Task { [weak self] in
             for await update in Transaction.updates {
                 guard let self else { return }
-                if case .verified(let transaction) = update {
+                if let transaction = self.checkVerified(update) {
                     await transaction.finish()
+                    await self.handleTransaction(transaction)
                 }
-                await self.refreshEntitlement()
             }
         }
     }
@@ -71,15 +84,54 @@ final class StoreManager {
     func product(_ id: String) -> Product? { products.first { $0.id == id } }
 
     func refreshEntitlement() async {
-        if Self.forcedPro { setPro(true); return }
-        var entitled = false
-        for await result in Transaction.currentEntitlements {
-            guard case .verified(let transaction) = result else { continue }
-            if transaction.revocationDate != nil { continue }
-            if let expiry = transaction.expirationDate, expiry < Date() { continue }
-            if ProductID.all.contains(transaction.productID) { entitled = true }
+        if Self.forcedPro {
+            updateProState()
+            return
         }
-        setPro(entitled)
+
+        var foundLifetime = false
+        var lifetimeRevoked = false
+        var latestExpiry: Date? = nil
+        var foundAnyActiveTransaction = false
+
+        for await result in Transaction.currentEntitlements {
+            guard let transaction = checkVerified(result) else { continue }
+
+            if transaction.productID == ProductID.lifetime {
+                if transaction.revocationDate != nil {
+                    lifetimeRevoked = true
+                } else {
+                    foundLifetime = true
+                    foundAnyActiveTransaction = true
+                }
+            } else if transaction.productID == ProductID.weekly {
+                if transaction.revocationDate == nil, let expiry = transaction.expirationDate {
+                    if latestExpiry == nil || expiry > latestExpiry! {
+                        latestExpiry = expiry
+                    }
+                    if expiry > Date() {
+                        foundAnyActiveTransaction = true
+                    }
+                }
+            }
+        }
+
+        // Lifetime is permanent: only clear if StoreKit explicitly confirms revocation/refund.
+        // If offline or StoreKit yields no transactions, retain existing hasLifetime.
+        if foundLifetime {
+            setLifetime(true)
+        } else if lifetimeRevoked {
+            setLifetime(false)
+        }
+
+        if let latestExpiry {
+            setSubscriptionExpiry(latestExpiry)
+        } else if foundAnyActiveTransaction && !hasLifetime {
+            // Entitlements answered actively, but weekly subscription is not present
+            setSubscriptionExpiry(nil)
+        }
+
+        updateProState()
     }
 
     @discardableResult
@@ -91,12 +143,12 @@ final class StoreManager {
         do {
             switch try await product.purchase() {
             case .success(let verification):
-                guard case .verified(let transaction) = verification else {
+                guard let transaction = checkVerified(verification) else {
                     lastError = "That purchase couldn't be verified."
                     return false
                 }
                 await transaction.finish()
-                await refreshEntitlement()
+                await handleTransaction(transaction)
                 return true
             case .userCancelled:
                 return false
@@ -128,8 +180,61 @@ final class StoreManager {
         lastError = "Product \(id) isn't available. Check App Store Connect or the StoreKit configuration."
     }
 
-    private func setPro(_ value: Bool) {
-        isPro = value
-        UserDefaults.standard.set(value, forKey: Self.cacheKey)
+    // MARK: - Internal Helpers
+
+    private func checkVerified<T>(_ result: VerificationResult<T>) -> T? {
+        switch result {
+        case .verified(let safe):
+            return safe
+        case .unverified(let unverified, _):
+            #if DEBUG
+            // StoreKit testing files sign locally; allow unverified in debug builds.
+            return unverified
+            #else
+            return nil
+            #endif
+        }
+    }
+
+    private func handleTransaction(_ transaction: Transaction) async {
+        guard ProductID.all.contains(transaction.productID) else { return }
+
+        if transaction.productID == ProductID.lifetime {
+            if transaction.revocationDate != nil {
+                setLifetime(false)
+            } else {
+                setLifetime(true)
+            }
+        } else if transaction.productID == ProductID.weekly {
+            if transaction.revocationDate != nil {
+                setSubscriptionExpiry(nil)
+            } else if let expiry = transaction.expirationDate {
+                if subscriptionExpiry == nil || expiry > subscriptionExpiry! {
+                    setSubscriptionExpiry(expiry)
+                }
+            }
+        }
+        updateProState()
+    }
+
+    private func setLifetime(_ value: Bool) {
+        hasLifetime = value
+        UserDefaults.standard.set(value, forKey: Self.lifetimeKey)
+    }
+
+    private func setSubscriptionExpiry(_ date: Date?) {
+        subscriptionExpiry = date
+        if let date {
+            UserDefaults.standard.set(date.timeIntervalSince1970, forKey: Self.expiryKey)
+        } else {
+            UserDefaults.standard.removeObject(forKey: Self.expiryKey)
+        }
+    }
+
+    private func updateProState() {
+        let hasActiveSub = (subscriptionExpiry != nil && subscriptionExpiry! > Date())
+        let pro = Self.forcedPro || hasLifetime || hasActiveSub
+        isPro = pro
+        UserDefaults.standard.set(pro, forKey: Self.cacheKey)
     }
 }

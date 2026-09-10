@@ -82,6 +82,41 @@ final class AuthService: NSObject {
 
     // MARK: - Sign in with Apple
 
+    func handleAppleSignIn(result: Result<ASAuthorization, Error>) {
+        isBusy = true
+        lastError = nil
+        defer { isBusy = false }
+
+        switch result {
+        case .success(let authorization):
+            guard let credential = authorization.credential as? ASAuthorizationAppleIDCredential else {
+                lastError = AuthError.unexpectedCredential.localizedDescription
+                return
+            }
+            let id = credential.user
+            let name = [credential.fullName?.givenName, credential.fullName?.familyName]
+                .compactMap { $0 }
+                .joined(separator: " ")
+            let email = credential.email
+
+            let existing = self.user
+            let resolved = AuthUser(
+                id: id,
+                displayName: name.isEmpty ? existing?.displayName : name,
+                email: email ?? existing?.email,
+                provider: .apple
+            )
+            persist(resolved)
+
+        case .failure(let error):
+            if let asError = error as? ASAuthorizationError, asError.code == .canceled {
+                // Not an error worth surfacing.
+                return
+            }
+            lastError = error.localizedDescription
+        }
+    }
+
     func signInWithApple() async {
         isBusy = true
         lastError = nil

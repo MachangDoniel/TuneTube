@@ -245,6 +245,14 @@ xcodebuild -project TuneTube.xcodeproj -scheme TuneTube \
 
 ---
 
+## Code Review & AI Guidelines
+
+This project uses [CodeRabbit](https://coderabbit.ai) for automated PR reviews configured via [`.coderabbit.yaml`](.coderabbit.yaml).
+
+> **Instruction for AI Assistants**: Whenever an AI assistant completes changes, prepares a commit, or opens a pull request, **always ask the developer whether they want to go through a CodeRabbit review** before finalizing or merging. See [`AGENTS.md`](AGENTS.md) for details.
+
+---
+
 ## Legal and review posture
 
 Worth being clear-eyed about, because it shapes the architecture:

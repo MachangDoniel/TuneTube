@@ -5,6 +5,7 @@ import { cached } from './cache';
 import { buildHome } from './routes/home';
 import { getArtist, getCategory, getPlaylist } from './routes/browse';
 import { doSearch } from './routes/search';
+import { getLyrics, getRadio } from './routes/watch';
 import { CATEGORIES, MOOD_CHIPS, TRENDING_SEARCHES, type CategoryKey } from './config';
 import type { Env } from './types';
 
@@ -17,6 +18,8 @@ const TTL = {
   artist: 60 * 60 * 24, // 24h
   playlist: 60 * 60 * 6,
   category: 60 * 60 * 6,
+  radio: 60 * 30,
+  lyrics: 60 * 60 * 24 * 7,
 } as const;
 
 function client(c: any) {
@@ -103,6 +106,35 @@ app.get('/v1/category/:key', async (c) => {
     return c.json(data);
   } catch (err) {
     return c.json({ error: String(err) }, 502);
+  }
+});
+
+app.get('/v1/radio/:videoId', async (c) => {
+  const videoId = c.req.param('videoId');
+  const continuation = c.req.query('continuation') || undefined;
+  try {
+    // Continuation pages are one-shot; only the first page is worth caching.
+    const radio = continuation
+      ? await getRadio(client(c), videoId, continuation)
+      : await cached(c.env, `radio:${scope(c)}:${videoId}`, TTL.radio, () =>
+          getRadio(client(c), videoId), noCache(c),
+        );
+    return c.json(radio);
+  } catch (err) {
+    return c.json({ tracks: [], error: String(err) }, 502);
+  }
+});
+
+app.get('/v1/lyrics/:videoId', async (c) => {
+  const videoId = c.req.param('videoId');
+  try {
+    // Wrapped in an object so "no lyrics" is cached too (a bare null reads as a miss).
+    const body = await cached(c.env, `lyrics:${videoId}`, TTL.lyrics, async () => ({
+      lyrics: await getLyrics(client(c), videoId),
+    }), noCache(c));
+    return c.json(body);
+  } catch (err) {
+    return c.json({ lyrics: null, error: String(err) }, 502);
   }
 });
 

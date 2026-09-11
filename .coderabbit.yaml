@@ -1,0 +1,43 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+language: en-US
+early_access: false
+
+reviews:
+  profile: "chill" # Options: 'chill' (less nitpicky) or 'assertive' (strict)
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false # Set to true if you like a fun summary poem
+  review_status: true
+  collapse_walkthrough: false
+
+  # Ignore build artifacts, package locks, and Xcode project internals
+  path_filters:
+    - "!**/node_modules/**"
+    - "!**/*.lock"
+    - "!**/package-lock.json"
+    - "!**/build/**"
+    - "!**/.build/**"
+    - "!**/*.xcodeproj/**"
+    - "!**/*.xcworkspace/**"
+    - "!**/*.pbxproj"
+    - "!**/.DS_Store"
+
+  # Tailored review instructions for TuneTube components
+  path_instructions:
+    - path: "TuneTube/**"
+      instructions: |
+        - Review Swift and SwiftUI code for correctness, performance, and iOS best practices.
+        - Check for thread safety and appropriate use of Swift Concurrency (async/await, @MainActor).
+        - Ensure playback constraints remain respected (official IFrame API usage via WKWebView, no direct audio extraction).
+    - path: "server/**"
+      instructions: |
+        - Review TypeScript code running on Cloudflare Workers.
+        - Ensure robust error handling when interacting with upstream YouTube APIs.
+        - Check caching logic (KV storage, cache headers) and edge performance.
+
+auto_review:
+  enabled: true
+  drafts: false # Skip reviewing draft PRs until marked ready
+
+chat:
+  auto_reply: true

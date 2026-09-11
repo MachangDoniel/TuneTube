@@ -9,6 +9,9 @@ reviews:
   poem: false # Set to true if you like a fun summary poem
   review_status: true
   collapse_walkthrough: false
+  auto_review:
+    enabled: true
+    drafts: false # Skip reviewing draft PRs until marked ready
 
   # Ignore build artifacts, package locks, and Xcode project internals
   path_filters:
@@ -34,10 +37,6 @@ reviews:
         - Review TypeScript code running on Cloudflare Workers.
         - Ensure robust error handling when interacting with upstream YouTube APIs.
         - Check caching logic (KV storage, cache headers) and edge performance.
-
-auto_review:
-  enabled: true
-  drafts: false # Skip reviewing draft PRs until marked ready
 
 chat:
   auto_reply: true

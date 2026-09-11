@@ -71,7 +71,7 @@ struct MiniPlayerView: View {
 
                 // Sleek progress bar across the bottom
                 GeometryReader { geo in
-                    let progress = player.duration > 0 ? min(1.0, max(0.0, player.currentTime / player.duration)) : 0.0
+                    let progress = (player.duration > 0 && !player.isLoading) ? min(1.0, max(0.0, player.currentTime / player.duration)) : 0.0
                     ZStack(alignment: .leading) {
                         Capsule()
                             .fill(Color.white.opacity(0.12))

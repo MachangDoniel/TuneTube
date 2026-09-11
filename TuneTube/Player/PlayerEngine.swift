@@ -120,6 +120,8 @@ final class PlayerEngine {
 
     func pause() {
         intendedPlaying = false
+        isLoading = false
+        currentLoadTask?.cancel()
         if isNativeAVPlayer {
             avPlayer.pause()
         } else {
@@ -142,9 +144,20 @@ final class PlayerEngine {
 
     private func loadCurrent() {
         guard let item = current else { return }
+
+        // Immediately silence and stop any currently playing audio/video from the previous track
+        avPlayer.pause()
+        avPlayer.replaceCurrentItem(with: nil)
+        Task { try? await player.pause() }
+
+        // Immediately reset player progress, state, and UI representations
+        currentTime = 0
+        isPlaying = false
         isLoading = true
         intendedPlaying = true
-        currentTime = 0
+        pendingVideoSyncTime = nil
+        isSeeking = false
+
         let expDur = item.durationSeconds.flatMap { Double($0) } ?? 0
         currentExpectedDuration = expDur > 0 ? expDur : nil
         duration = expDur
@@ -166,7 +179,6 @@ final class PlayerEngine {
                 // full ~4.5MB track in background, seamlessly swapping to local disk to guarantee
                 // zero cutoffs, zero silent endings, and complete background/lock-screen playback.
                 self.isNativeAVPlayer = true
-                try? await self.player.pause()
 
                 do {
                     let cachedLocalURL = await StreamResolver.shared.getCachedAudioFileURL(for: item.id)
@@ -363,21 +375,29 @@ final class PlayerEngine {
 
     func togglePlayPause() {
         if isNativeAVPlayer {
-            if isPlaying {
+            if isPlaying || isLoading {
                 intendedPlaying = false
+                isLoading = false
+                currentLoadTask?.cancel()
                 avPlayer.pause()
                 isPlaying = false
             } else {
                 intendedPlaying = true
                 configureAudioSession()
-                avPlayer.play()
-                isPlaying = true
+                if avPlayer.currentItem != nil {
+                    avPlayer.play()
+                    isPlaying = true
+                } else if current != nil {
+                    loadCurrent()
+                }
             }
             updateNowPlaying()
         } else {
             Task {
-                if isPlaying {
+                if isPlaying || isLoading {
                     intendedPlaying = false
+                    isLoading = false
+                    currentLoadTask?.cancel()
                     try? await player.pause()
                     isPlaying = false
                 } else {
@@ -430,7 +450,7 @@ final class PlayerEngine {
         let interval = CMTime(value: 1, timescale: 2) // 0.5s
         timeObserverToken = avPlayer.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
             Task { @MainActor [weak self] in
-                guard let self, !self.isScrubbing, !self.isSeeking, self.isNativeAVPlayer else { return }
+                guard let self, !self.isScrubbing, !self.isSeeking, self.isNativeAVPlayer, !self.isLoading, self.avPlayer.currentItem != nil else { return }
                 let seconds = time.seconds
                 if !seconds.isNaN && seconds >= 0 {
                     if self.duration > 0 {
@@ -466,7 +486,9 @@ final class PlayerEngine {
                     self.isLoading = true
                 } else if self.avPlayer.timeControlStatus == .paused {
                     self.isPlaying = false
-                    self.isLoading = false
+                    if !self.intendedPlaying {
+                        self.isLoading = false
+                    }
                 }
                 self.updateNowPlaying()
             }
@@ -484,7 +506,9 @@ final class PlayerEngine {
                     self.intendedPlaying = true
                 case .paused:
                     self.isPlaying = false
-                    self.isLoading = false
+                    if !self.intendedPlaying {
+                        self.isLoading = false
+                    }
                 case .waitingToPlayAtSpecifiedRate:
                     if !self.isPlaying {
                         self.isLoading = true
@@ -590,7 +614,9 @@ final class PlayerEngine {
                     }
                 case .paused:
                     self.isPlaying = false
-                    self.isLoading = false
+                    if !self.intendedPlaying {
+                        self.isLoading = false
+                    }
                 case .ended:
                     self.isPlaying = false
                     self.isLoading = false
@@ -716,7 +742,7 @@ final class PlayerEngine {
     }
 
     private func tick() async {
-        guard hasTrack, !isScrubbing, !isSeeking, !isNativeAVPlayer, pendingVideoSyncTime == nil else { return }
+        guard hasTrack, !isScrubbing, !isSeeking, !isNativeAVPlayer, pendingVideoSyncTime == nil, !isLoading else { return }
 
         if let time = try? await player.getCurrentTime() {
             let newTime = time.converted(to: .seconds).value

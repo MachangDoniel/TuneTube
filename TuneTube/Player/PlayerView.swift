@@ -314,6 +314,7 @@ struct PlayerView: View {
 
     private var scrubber: some View {
         PlayerScrubberView()
+            .id(player.current?.id)
     }
 
     // MARK: - Transport Controls
@@ -446,21 +447,25 @@ struct PlayerScrubberView: View {
     @State private var scrubValue: Double = 0
 
     var body: some View {
+        let displayTime = player.isScrubbing ? scrubValue : (player.isLoading ? 0 : player.currentTime)
+
         VStack(spacing: 6) {
             CustomCircularSlider(
                 value: Binding(
-                    get: { player.isScrubbing ? scrubValue : player.currentTime },
+                    get: { displayTime },
                     set: { scrubValue = $0 }
                 ),
                 range: 0...max(player.duration, 1),
                 onEditingChanged: { editing in
+                    guard !player.isLoading else { return }
                     player.isScrubbing = editing
                     if !editing { player.seek(to: scrubValue) }
                 }
             )
+            .disabled(player.isLoading)
 
             HStack {
-                Text(PlayerView.time(player.isScrubbing ? scrubValue : player.currentTime))
+                Text(PlayerView.time(displayTime))
                 Spacer()
                 Text(PlayerView.time(player.duration))
             }

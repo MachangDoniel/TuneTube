@@ -66,13 +66,14 @@ actor APIClient {
     }
 
     /// Fetch + decode, writing through to the disk cache. On failure, fall back
-    /// to the cached copy rather than showing an empty screen.
+    /// to the cached copy rather than showing an empty screen. A nil `cacheKey`
+    /// skips the disk cache (one-shot responses like continuation pages).
     private func get<T: Decodable & Sendable>(
         _ type: T.Type,
         path: String,
         query: [String: String] = [:],
         headers: [String: String] = [:],
-        cacheKey: String
+        cacheKey: String?
     ) async throws -> T {
         let request = makeRequest(path: path, query: query, headers: headers)
         let startTime = CFAbsoluteTimeGetCurrent()
@@ -94,7 +95,7 @@ actor APIClient {
                 throw APIError.badStatus(http.statusCode)
             }
             let value = try decoder.decode(T.self, from: data)
-            await cache.write(data, for: cacheKey)
+            if let cacheKey { await cache.write(data, for: cacheKey) }
             return value
         } catch {
             let duration = CFAbsoluteTimeGetCurrent() - startTime
@@ -102,7 +103,8 @@ actor APIClient {
             NetworkLogger.logError(error, duration: duration, for: request)
             #endif
 
-            if let data = await cache.read(for: cacheKey),
+            if let cacheKey,
+               let data = await cache.read(for: cacheKey),
                let cached = try? decoder.decode(T.self, from: data) {
                 return cached
             }
@@ -136,6 +138,17 @@ actor APIClient {
         struct CategoryResponse: Codable { let shelves: [Shelf] }
         return try await get(CategoryResponse.self, path: "v1/category/\(key)",
                              cacheKey: "category-\(key)").shelves
+    }
+
+    func radio(for videoId: String, continuation: String? = nil) async throws -> RadioPage {
+        try await get(RadioPage.self, path: "v1/radio/\(videoId)",
+                      query: continuation.map { ["continuation": $0] } ?? [:],
+                      cacheKey: continuation == nil ? "radio-\(videoId)" : nil)
+    }
+
+    func lyrics(for videoId: String) async throws -> Lyrics? {
+        try await get(LyricsResponse.self, path: "v1/lyrics/\(videoId)",
+                      cacheKey: "lyrics-\(videoId)").lyrics
     }
 
     func config() async throws -> RemoteConfig {

@@ -1,8 +1,9 @@
-import MediaPlayer
 import SwiftData
 import SwiftUI
 import YouTubePlayerKit
 
+/// Full-screen player, laid out after YouTube Music: big artwork, title, a
+/// scrollable row of action chips, scrubber, transport, and Up next / Lyrics tabs.
 struct PlayerView: View {
     @Environment(PlayerEngine.self) private var player
     @Environment(Navigator.self) private var navigator
@@ -10,52 +11,34 @@ struct PlayerView: View {
 
     private var library: LibraryStore { LibraryStore(context: context) }
 
-    @State private var showActions = false
     @State private var showAddToPlaylist = false
+    @State private var showQueue = false
+    @State private var showLyrics = false
     @State private var dragOffset: CGFloat = 0
+    @State private var isFavourite = false
+    @State private var tint: Color = Color(white: 0.14)
+    @State private var seekFlash: SeekFlash?
+    /// Horizontal drag of the artwork carousel, and which axis the current drag locked to.
+    @State private var swipeOffset: CGFloat = 0
+    @State private var dragAxis: Axis?
+
+    private enum SeekFlash: Equatable { case back, forward }
 
     var body: some View {
         GeometryReader { geometry in
             VStack(spacing: 0) {
-                // Top Bar: Down chevron icon at top left, grabber pill at top center
-                HStack {
-                    Button { closePlayer() } label: {
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 17, weight: .bold))
-                            .foregroundStyle(Theme.textPrimary)
-                            .frame(width: 44, height: 44)
-                            .background(Color.white.opacity(0.12), in: Circle())
-                            .contentShape(Circle())
-                    }
-                    .buttonStyle(.plain)
-                    .highPriorityGesture(TapGesture().onEnded { closePlayer() })
-                    .accessibilityLabel("Close player")
-
-                    Spacer()
-
-                    Capsule()
-                        .fill(Color.white.opacity(0.3))
-                        .frame(width: 38, height: 5)
-                        .contentShape(Rectangle().size(width: 60, height: 24))
-                        .onTapGesture { closePlayer() }
-
-                    Spacer()
-
-                    // Symmetrical frame so the grabber pill stays perfectly centered
-                    Color.clear
-                        .frame(width: 44, height: 44)
-                }
-                .padding(.horizontal, 20)
-                .padding(.top, max(geometry.safeAreaInsets.top + 8, 54))
+                topBar
+                    .padding(.horizontal, 16)
+                    .padding(.top, max(geometry.safeAreaInsets.top + 4, 50))
 
                 if player.current == nil {
                     emptyStateView
                 } else {
-                    playerContentView(geometry: geometry)
+                    playerContent(geometry: geometry)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color(red: 0.11, green: 0.11, blue: 0.12).ignoresSafeArea())
+            .background(background)
             .offset(y: max(0, dragOffset))
             .gesture(
                 DragGesture(minimumDistance: 25)
@@ -64,221 +47,409 @@ struct PlayerView: View {
                             dragOffset = value.translation.height
                         }
                     }
-                    .onEnded { value in
-                        if value.translation.height > 100 {
-                            closePlayer()
-                        }
-                        withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) {
-                            dragOffset = 0
-                        }
-                    }
+                    .onEnded { value in endDismissDrag(value.translation.height) }
             )
         }
         .ignoresSafeArea()
-        .confirmationDialog("", isPresented: $showActions) {
-            Button("Go to Artist") { goToArtist() }
-            Button("Add to Playlist") { showAddToPlaylist = true }
-            Button("Cancel", role: .cancel) {}
-        }
+        // The player stays mounted off-screen, so resync when the track changes or
+        // the player opens (the song may have been unfavourited from Library).
+        .onChange(of: player.current?.id, initial: true) { syncFavourite() }
+        .onChange(of: navigator.showPlayer) { syncFavourite() }
+        .task(id: player.current?.effectiveThumbnailUrl) { await updateTint() }
         .sheet(isPresented: $showAddToPlaylist) {
             if let item = player.current {
                 AddToPlaylistSheet(item: item)
             }
         }
+        .sheet(isPresented: $showQueue) { UpNextSheet() }
+        .sheet(isPresented: $showLyrics) { LyricsSheet() }
     }
 
-    // MARK: - Player Content
+    // MARK: - Background
 
-    private func playerContentView(geometry: GeometryProxy) -> some View {
-        VStack(spacing: 0) {
-            // Song / Video Toggle
-            HStack(spacing: 0) {
-                ForEach(PlayerDisplayMode.allCases, id: \.self) { mode in
-                    Button {
-                        withAnimation(.spring(response: 0.28, dampingFraction: 0.78)) {
-                            navigator.playerDisplayMode = mode
-                            player.setDisplayMode(mode)
-                        }
-                    } label: {
-                        Text(mode.rawValue)
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(navigator.playerDisplayMode == mode ? Theme.textPrimary : Theme.textSecondary)
-                            .padding(.horizontal, 20)
-                            .padding(.vertical, 6)
-                            .background(
-                                navigator.playerDisplayMode == mode ? Color.white.opacity(0.18) : Color.clear,
-                                in: Capsule()
-                            )
-                    }
-                }
-            }
-            .padding(3)
-            .background(Color.white.opacity(0.08), in: Capsule())
-            .padding(.top, 10)
-            .padding(.bottom, 6)
-
-            Spacer()
-
-            // Media Display Area: Live YouTube Video or Square Artwork Card
-            VStack(spacing: 14) {
-                if let item = player.current {
-                    let cardSize = min(geometry.size.width - 48, geometry.size.height * 0.40)
-                    let videoHeight = (geometry.size.width - 40) * 9 / 16
-
-                    ZStack {
-                        // Square Artwork Card (Song Mode)
-                        ZStack {
-                            Theme.surfaceHigh
-
-                            CachedImage(url: item.effectiveThumbnailUrl, contentMode: .fill) {
-                                Theme.surfaceHigh
-                                    .overlay(
-                                        Image(systemName: "music.note")
-                                            .font(.system(size: 52))
-                                            .foregroundStyle(Theme.textSecondary)
-                                    )
-                            }
-                        }
-                        .frame(width: cardSize, height: cardSize)
-                        .clipped()
-                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                .stroke(Color.white.opacity(0.12), lineWidth: 0.8)
-                        )
-                        .shadow(color: Color.black.opacity(0.45), radius: 18, x: 0, y: 8)
-                        .id(item.id)
-                        .opacity(navigator.playerDisplayMode == .song ? 1.0 : 0.0)
-                        .allowsHitTesting(navigator.playerDisplayMode == .song)
-
-                        // Live YouTube Video (Video Mode)
-                        YouTubePlayerView(player.player) { state in
-                            switch state {
-                            case .idle:
-                                Color.black.overlay(ProgressView().tint(.white))
-                            case .ready:
-                                EmptyView()
-                            case .error:
-                                Color.black.overlay(
-                                    Text("Can't play this track")
-                                        .font(.system(size: 14))
-                                        .foregroundStyle(Theme.textSecondary)
-                                )
-                            }
-                        }
-                        .aspectRatio(16 / 9, contentMode: .fit)
-                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                .stroke(Color.white.opacity(0.12), lineWidth: 0.8)
-                        )
-                        .shadow(color: Color.black.opacity(0.45), radius: 18, x: 0, y: 8)
-                        .padding(.horizontal, 20)
-                        .opacity(navigator.playerDisplayMode == .video ? 1.0 : 0.0)
-                        .allowsHitTesting(navigator.playerDisplayMode == .video)
-                    }
-                    .frame(height: navigator.playerDisplayMode == .video ? videoHeight : cardSize)
-                    .animation(.spring(response: 0.32, dampingFraction: 0.82), value: navigator.playerDisplayMode)
-                }
-
-                // Previous and Next directly at the bottom of the video preview with button labels
-                HStack {
-                    Button { player.previous() } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "chevron.left.2")
-                                .font(.system(size: 13, weight: .bold))
-                            Text("Prev")
-                                .font(.system(size: 13, weight: .semibold))
-                        }
-                        .foregroundStyle(Theme.textPrimary)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 7)
-                        .background(Color.white.opacity(0.12), in: Capsule())
-                        .contentShape(Capsule())
-                    }
-                    .disabled(!player.hasPrevious)
-                    .opacity(player.hasPrevious ? 1.0 : 0.35)
-                    .accessibilityLabel("Previous track")
-
-                    Spacer()
-
-                    Button { player.next() } label: {
-                        HStack(spacing: 6) {
-                            Text("Next")
-                                .font(.system(size: 13, weight: .semibold))
-                            Image(systemName: "chevron.right.2")
-                                .font(.system(size: 13, weight: .bold))
-                        }
-                        .foregroundStyle(Theme.textPrimary)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 7)
-                        .background(Color.white.opacity(0.12), in: Capsule())
-                        .contentShape(Capsule())
-                    }
-                    .disabled(!player.hasNext)
-                    .opacity(player.hasNext ? 1.0 : 0.35)
-                    .accessibilityLabel("Next track")
-                }
-                .padding(.horizontal, 20)
-            }
-
-            Spacer()
-
-            // Metadata & Controls
-            VStack(spacing: 18) {
-                // Song name on the left, Love button & 3-dot options at the right side
-                HStack(alignment: .center) {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(player.current?.title ?? "")
-                            .font(.system(size: 20, weight: .bold))
-                            .foregroundStyle(Theme.textPrimary)
-                            .lineLimit(2)
-
-                        Text(player.current?.displaySubtitle() ?? "")
-                            .font(.system(size: 15))
-                            .foregroundStyle(Theme.textSecondary)
-                            .lineLimit(1)
-                    }
-                    Spacer()
-
-                    // Favorite Love Button
-                    if let current = player.current {
-                        Button {
-                            withAnimation(.spring(response: 0.28, dampingFraction: 0.5)) {
-                                library.toggleFavourite(current)
-                            }
-                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                        } label: {
-                            let isFav = library.isFavourite(current)
-                            Image(systemName: isFav ? "heart.fill" : "heart")
-                                .font(.system(size: 22))
-                                .foregroundStyle(isFav ? .pink : Theme.textSecondary)
-                                .scaleEffect(isFav ? 1.08 : 1.0)
-                                .frame(width: 40, height: 40)
-                                .contentShape(Rectangle())
-                        }
-                        .accessibilityLabel(library.isFavourite(current) ? "Remove from Favourites" : "Add to Favourites")
-                    }
-
-                    Button { showActions = true } label: {
-                        Image(systemName: "ellipsis")
-                            .font(.system(size: 20, weight: .semibold))
-                            .foregroundStyle(Theme.textPrimary)
-                            .frame(width: 40, height: 40)
-                            .contentShape(Rectangle())
-                    }
-                    .accessibilityLabel("More options")
-                }
-
-                // Scrubber with circular thumb head
-                scrubber
-
-                // Transport controls: Previous, Rewind 10, Play/Pause with loading ring, Forward 10, Next
-                transportControls
-            }
-            .padding(.horizontal, 24)
-            .padding(.bottom, 44)
+    private var background: some View {
+        ZStack {
+            Color.black
+            LinearGradient(
+                colors: [tint, tint.opacity(0.55), Color.black],
+                startPoint: .top,
+                endPoint: .bottom
+            )
         }
+        .ignoresSafeArea()
+    }
+
+    private func updateTint() async {
+        let url = player.current?.effectiveThumbnailUrl
+        if let cached = ArtworkPalette.cachedColor(for: url) {
+            tint = cached
+            return
+        }
+        guard let color = await ArtworkPalette.color(for: url), !Task.isCancelled else { return }
+        withAnimation(.easeInOut(duration: 0.6)) { tint = color }
+    }
+
+    // MARK: - Top bar
+
+    private var topBar: some View {
+        HStack(spacing: 4) {
+            Button { closePlayer() } label: {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 18, weight: .semibold))
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .accessibilityLabel("Close player")
+
+            Spacer()
+
+            AirPlayButton()
+                .frame(width: 40, height: 40)
+                .accessibilityLabel("AirPlay")
+
+            moreMenu
+        }
+        .foregroundStyle(Theme.textPrimary)
+        .overlay {
+            if player.current != nil { displayModeToggle }
+        }
+    }
+
+    /// Song / Video switch, drawn as two icons in a capsule.
+    private var displayModeToggle: some View {
+        HStack(spacing: 2) {
+            ForEach(PlayerDisplayMode.allCases, id: \.self) { mode in
+                let selected = navigator.playerDisplayMode == mode
+                Button {
+                    withAnimation(.spring(response: 0.28, dampingFraction: 0.78)) {
+                        navigator.playerDisplayMode = mode
+                        player.setDisplayMode(mode)
+                    }
+                } label: {
+                    Image(systemName: mode == .song ? "headphones" : "play.rectangle")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(selected ? Color.black : Theme.textSecondary)
+                        .frame(width: 42, height: 28)
+                        .background(selected ? Color.white : Color.clear, in: Capsule())
+                }
+                .accessibilityLabel(mode.rawValue)
+                .accessibilityAddTraits(selected ? .isSelected : [])
+            }
+        }
+        .padding(3)
+        .background(Color.white.opacity(0.12), in: Capsule())
+    }
+
+    private var moreMenu: some View {
+        Menu {
+            if player.current != nil {
+                Button { player.startMix(); showQueue = true } label: {
+                    Label("Start mix", systemImage: "dot.radiowaves.left.and.right")
+                }
+                Button { showAddToPlaylist = true } label: {
+                    Label("Add to playlist", systemImage: "text.badge.plus")
+                }
+                Button { showLyrics = true } label: {
+                    Label("Lyrics", systemImage: "quote.bubble")
+                }
+                if player.current?.artistName != nil {
+                    Button { goToArtist() } label: {
+                        Label("Go to artist", systemImage: "person")
+                    }
+                }
+            }
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 18, weight: .semibold))
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
+        }
+        .accessibilityLabel("More options")
+    }
+
+    // MARK: - Player content
+
+    private func playerContent(geometry: GeometryProxy) -> some View {
+        let side = min(geometry.size.width - 32, geometry.size.height * 0.42)
+
+        return VStack(spacing: 0) {
+            Spacer(minLength: 12)
+
+            media(side: side, width: geometry.size.width - 32,
+                  // Far enough that the neighbouring covers sit just off-screen at rest.
+                  step: max(side + 20, (geometry.size.width + side) / 2 + 8))
+
+            Spacer(minLength: 16)
+
+            VStack(alignment: .leading, spacing: 18) {
+                titleBlock
+                    .padding(.horizontal, 24)
+
+                actionChips
+
+                PlayerControls()
+                    .padding(.horizontal, 24)
+            }
+
+            Spacer(minLength: 12)
+
+            bottomTabs
+                .padding(.bottom, max(geometry.safeAreaInsets.bottom, 20))
+        }
+    }
+
+    // MARK: Media
+
+    private func media(side: CGFloat, width: CGFloat, step: CGFloat) -> some View {
+        let isVideo = navigator.playerDisplayMode == .video
+        let videoHeight = width * 9 / 16
+
+        return ZStack {
+            if let item = player.current {
+                artworkCarousel(item, side: side, step: step)
+                    .opacity(isVideo ? 0 : 1)
+                    .allowsHitTesting(!isVideo)
+            }
+
+            // Must stay mounted: it's the iframe player for video mode.
+            YouTubePlayerView(player.player) { state in
+                switch state {
+                case .idle:
+                    Color.black.overlay(ProgressView().tint(.white))
+                case .ready:
+                    EmptyView()
+                case .error:
+                    Color.black.overlay(
+                        Text("Can't play this track")
+                            .font(.system(size: 14))
+                            .foregroundStyle(Theme.textSecondary)
+                    )
+                }
+            }
+            .frame(width: width, height: videoHeight)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .opacity(isVideo ? 1 : 0)
+            .allowsHitTesting(isVideo)
+        }
+        // Same height in both modes (the video is centred in the artwork's slot),
+        // so switching Song/Video never shifts the title and controls.
+        .frame(height: max(side, videoHeight))
+        .animation(.spring(response: 0.32, dampingFraction: 0.82), value: navigator.playerDisplayMode)
+    }
+
+    /// Current cover with the previous/next covers parked either side. Swipe left
+    /// for the next track, right for the previous one.
+    private func artworkCarousel(_ item: MediaItem, side: CGFloat, step: CGFloat) -> some View {
+        ZStack {
+            if let previous = player.previousItem {
+                artworkImage(previous, side: side)
+                    .offset(x: swipeOffset - step)
+            }
+
+            artworkImage(item, side: side)
+                .overlay(alignment: seekFlash == .back ? .leading : .trailing) {
+                    if let seekFlash {
+                        Image(systemName: seekFlash == .back ? "gobackward.10" : "goforward.10")
+                            .font(.system(size: 30, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .frame(width: 72, height: 72)
+                            .background(.black.opacity(0.45), in: Circle())
+                            .padding(24)
+                            .transition(.opacity.combined(with: .scale(scale: 0.8)))
+                    }
+                }
+                .offset(x: swipeOffset)
+
+            if let next = player.nextItem {
+                artworkImage(next, side: side)
+                    .offset(x: swipeOffset + step)
+            }
+        }
+        .frame(width: side, height: side)
+        .contentShape(Rectangle())
+        // Double-tap left/right half to skip back/forward 10s, like YouTube.
+        .onTapGesture(count: 2) { location in
+            seek(location.x < side / 2 ? .back : .forward)
+        }
+        .gesture(artworkDrag(step: step))
+        .accessibilityAction(named: "Next track") { player.next() }
+        .accessibilityAction(named: "Previous track") { player.skipToPreviousTrack() }
+        .accessibilityAction(named: "Skip back 10 seconds") { seek(.back) }
+        .accessibilityAction(named: "Skip forward 10 seconds") { seek(.forward) }
+    }
+
+    private func artworkImage(_ item: MediaItem, side: CGFloat) -> some View {
+        CachedImage(url: item.effectiveThumbnailUrl, contentMode: .fill) {
+            Theme.surfaceHigh.overlay(
+                Image(systemName: "music.note")
+                    .font(.system(size: 52))
+                    .foregroundStyle(Theme.textSecondary)
+            )
+        }
+        .frame(width: side, height: side)
+        .scaleEffect(item.thumbnailLetterboxScale)
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .shadow(color: .black.opacity(0.5), radius: 24, y: 12)
+        // New identity per track, so CachedImage seeds from the memory cache on
+        // its first frame instead of briefly showing the old cover.
+        .id(item.id)
+    }
+
+    /// Locks to an axis on the first movement: horizontal swipes the carousel,
+    /// vertical falls through to pull-down-to-close.
+    private func artworkDrag(step: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: 10)
+            .onChanged { value in
+                let t = value.translation
+                if dragAxis == nil {
+                    dragAxis = abs(t.width) > abs(t.height) ? .horizontal : .vertical
+                }
+                if dragAxis == .horizontal {
+                    // Rubber-band when there's no track in that direction.
+                    let blocked = (t.width < 0 && player.nextItem == nil)
+                        || (t.width > 0 && player.previousItem == nil)
+                    swipeOffset = blocked ? t.width / 4 : t.width
+                } else {
+                    dragOffset = max(0, t.height)
+                }
+            }
+            .onEnded { value in
+                let axis = dragAxis
+                dragAxis = nil
+                if axis == .horizontal {
+                    finishSwipe(predictedWidth: value.predictedEndTranslation.width, step: step)
+                } else {
+                    endDismissDrag(value.translation.height)
+                }
+            }
+    }
+
+    private func finishSwipe(predictedWidth: CGFloat, step: CGFloat) {
+        // Predicted end includes velocity, so a quick flick counts as well as a long drag.
+        let threshold = step * 0.35
+        let direction: CGFloat
+        if predictedWidth < -threshold, player.nextItem != nil {
+            direction = -1
+        } else if predictedWidth > threshold, player.previousItem != nil {
+            direction = 1
+        } else {
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { swipeOffset = 0 }
+            return
+        }
+
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        withAnimation(.easeOut(duration: 0.22)) {
+            swipeOffset = direction * step
+        } completion: {
+            // The neighbour is now centred: swap the track and recentre in one
+            // un-animated step, so the swap itself is invisible.
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                if direction < 0 { player.next() } else { player.skipToPreviousTrack() }
+                swipeOffset = 0
+            }
+        }
+    }
+
+    private func seek(_ direction: SeekFlash) {
+        direction == .back ? player.backward10() : player.forward10()
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        withAnimation(.easeOut(duration: 0.15)) { seekFlash = direction }
+        Task {
+            try? await Task.sleep(for: .milliseconds(600))
+            guard seekFlash == direction else { return }
+            withAnimation(.easeIn(duration: 0.25)) { seekFlash = nil }
+        }
+    }
+
+    // MARK: Title & chips
+
+    private var titleBlock: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(player.current?.title ?? "")
+                .font(.system(size: 22, weight: .bold))
+                .foregroundStyle(Theme.textPrimary)
+                .lineLimit(1)
+
+            Button { goToArtist() } label: {
+                Text(player.current?.displaySubtitle() ?? "")
+                    .font(.system(size: 16))
+                    .foregroundStyle(Theme.textSecondary)
+                    .lineLimit(1)
+            }
+            .buttonStyle(.plain)
+            .disabled(player.current?.artistName == nil)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var actionChips: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                if let current = player.current {
+                    Button { toggleFavourite(current) } label: {
+                        ChipLabel(
+                            systemName: isFavourite ? "heart.fill" : "heart",
+                            title: isFavourite ? "Favourited" : "Favourite",
+                            iconColor: isFavourite ? .pink : Theme.textPrimary
+                        )
+                        .symbolEffect(.bounce, value: isFavourite)
+                    }
+                    .accessibilityLabel(isFavourite ? "Remove from Favourites" : "Add to Favourites")
+
+                    Button { showLyrics = true } label: {
+                        ChipLabel(systemName: "quote.bubble", title: "Lyrics")
+                    }
+
+                    Button { showAddToPlaylist = true } label: {
+                        ChipLabel(systemName: "text.badge.plus", title: "Save")
+                    }
+
+                    if let url = URL(string: "https://music.youtube.com/watch?v=\(current.id)") {
+                        ShareLink(item: url, subject: Text(current.title)) {
+                            ChipLabel(systemName: "arrowshape.turn.up.right", title: "Share")
+                        }
+                    }
+
+                    Button { player.startMix(); showQueue = true } label: {
+                        ChipLabel(systemName: "dot.radiowaves.left.and.right", title: "Mix")
+                    }
+                }
+            }
+            .buttonStyle(PressScaleStyle(scale: 0.94))
+            .padding(.horizontal, 24)
+        }
+    }
+
+    // MARK: Bottom tabs
+
+    private var bottomTabs: some View {
+        HStack(spacing: 0) {
+            tabButton("UP NEXT") { showQueue = true }
+            tabButton("LYRICS") { showLyrics = true }
+        }
+        .padding(.horizontal, 24)
+        .contentShape(Rectangle())
+        // Swipe up from the bottom opens the queue.
+        .gesture(
+            DragGesture(minimumDistance: 20).onEnded { value in
+                if value.translation.height < -40 { showQueue = true }
+            }
+        )
+    }
+
+    private func tabButton(_ title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 13, weight: .bold))
+                .tracking(0.8)
+                .foregroundStyle(Theme.textSecondary)
+                .frame(maxWidth: .infinity)
+                .frame(height: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Empty State
@@ -310,71 +481,35 @@ struct PlayerView: View {
         }
     }
 
-    // MARK: - Scrubber
+    // MARK: - Actions
 
-    private var scrubber: some View {
-        PlayerScrubberView()
-            .id(player.current?.id)
+    private func toggleFavourite(_ item: MediaItem) {
+        // Flip the local state first so the heart reacts on the same frame, then persist.
+        let newValue = !isFavourite
+        withAnimation(.spring(response: 0.28, dampingFraction: 0.5)) {
+            isFavourite = newValue
+        }
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        library.setFavourite(item, newValue)
     }
 
-    // MARK: - Transport Controls
-
-    private var transportControls: some View {
-        HStack(spacing: 0) {
-            // Rewind 10 seconds
-            Button {
-                player.backward10()
-            } label: {
-                Image(systemName: "backward.fill")
-                    .font(.system(size: 26))
-                    .frame(maxWidth: .infinity)
-                    .contentShape(Rectangle())
-            }
-            .simultaneousGesture(
-                LongPressGesture(minimumDuration: 0.5).onEnded { _ in
-                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                    player.previous()
-                }
-            )
-            .accessibilityLabel("Rewind 10 seconds")
-
-            // Play / Pause with circling loading indicator
-            Button { player.togglePlayPause() } label: {
-                PlayPauseLoadingButton(
-                    isPlaying: player.isPlaying,
-                    isLoading: player.isLoading,
-                    iconSize: 36,
-                    frameSize: 56
-                )
-                .frame(maxWidth: .infinity)
-            }
-            .accessibilityLabel(player.isPlaying ? "Pause" : "Play")
-
-            // Forward 10 seconds
-            Button {
-                player.forward10()
-            } label: {
-                Image(systemName: "forward.fill")
-                    .font(.system(size: 26))
-                    .frame(maxWidth: .infinity)
-                    .contentShape(Rectangle())
-            }
-            .simultaneousGesture(
-                LongPressGesture(minimumDuration: 0.5).onEnded { _ in
-                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                    player.next()
-                }
-            )
-            .accessibilityLabel("Forward 10 seconds")
+    private func endDismissDrag(_ translation: CGFloat) {
+        if translation > 100 {
+            closePlayer()
         }
-        .foregroundStyle(Theme.textPrimary)
-        .padding(.vertical, 8)
+        withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) {
+            dragOffset = 0
+        }
     }
 
     private func closePlayer() {
         withAnimation(.spring(response: 0.36, dampingFraction: 0.88)) {
             navigator.showPlayer = false
         }
+    }
+
+    private func syncFavourite() {
+        isFavourite = player.current.map { library.isFavourite($0) } ?? false
     }
 
     private func goToArtist() {
@@ -394,83 +529,24 @@ struct PlayerView: View {
     }
 }
 
-/// Custom slider featuring a sleek, circular thumb head.
-struct CustomCircularSlider: View {
-    @Binding var value: Double
-    let range: ClosedRange<Double>
-    var onEditingChanged: (Bool) -> Void
-
-    private let thumbSize: CGFloat = 13
+/// Capsule chip in the row under the title (Favourite, Lyrics, Save, Share, Mix).
+private struct ChipLabel: View {
+    let systemName: String
+    let title: String
+    var iconColor: Color = Theme.textPrimary
 
     var body: some View {
-        GeometryReader { geometry in
-            let totalWidth = geometry.size.width
-            let progress = max(0, min(1, (value - range.lowerBound) / max(1, range.upperBound - range.lowerBound)))
-            let thumbX = progress * (totalWidth - thumbSize)
-
-            ZStack(alignment: .leading) {
-                Capsule()
-                    .fill(Color.white.opacity(0.25))
-                    .frame(height: 3.5)
-
-                Capsule()
-                    .fill(Color.white)
-                    .frame(width: thumbX + thumbSize / 2, height: 3.5)
-
-                Circle()
-                    .fill(Color.white)
-                    .frame(width: thumbSize, height: thumbSize)
-                    .shadow(color: .black.opacity(0.35), radius: 2.5, y: 1)
-                    .offset(x: thumbX)
-            }
-            .frame(height: 24)
-            .contentShape(Rectangle())
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { gesture in
-                        onEditingChanged(true)
-                        let newProgress = max(0, min(1, gesture.location.x / totalWidth))
-                        value = range.lowerBound + newProgress * (range.upperBound - range.lowerBound)
-                    }
-                    .onEnded { _ in
-                        onEditingChanged(false)
-                    }
-            )
+        HStack(spacing: 6) {
+            Image(systemName: systemName)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(iconColor)
+            Text(title)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Theme.textPrimary)
         }
-        .frame(height: 24)
-    }
-}
-
-/// Isolated scrubber subview so high-frequency updates don't churn parent layout.
-struct PlayerScrubberView: View {
-    @Environment(PlayerEngine.self) private var player
-    @State private var scrubValue: Double = 0
-
-    var body: some View {
-        let displayTime = player.isScrubbing ? scrubValue : (player.isLoading ? 0 : player.currentTime)
-
-        VStack(spacing: 6) {
-            CustomCircularSlider(
-                value: Binding(
-                    get: { displayTime },
-                    set: { scrubValue = $0 }
-                ),
-                range: 0...max(player.duration, 1),
-                onEditingChanged: { editing in
-                    guard !player.isLoading else { return }
-                    player.isScrubbing = editing
-                    if !editing { player.seek(to: scrubValue) }
-                }
-            )
-            .disabled(player.isLoading)
-
-            HStack {
-                Text(PlayerView.time(displayTime))
-                Spacer()
-                Text(PlayerView.time(player.duration))
-            }
-            .font(.system(size: 12))
-            .foregroundStyle(Theme.textSecondary)
-        }
+        .padding(.horizontal, 14)
+        .frame(height: 34)
+        .background(Color.white.opacity(0.12), in: Capsule())
+        .contentShape(Capsule())
     }
 }

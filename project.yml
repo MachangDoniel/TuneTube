@@ -12,6 +12,9 @@ packages:
   YouTubeKit:
     url: https://github.com/alexeichhorn/YouTubeKit
     from: 0.4.9
+  DebugSwift:
+    url: https://github.com/DebugSwift/DebugSwift.git
+    branch: main
 
 schemes:
   TuneTube:
@@ -31,6 +34,7 @@ targets:
     dependencies:
       - package: YouTubePlayerKit
       - package: YouTubeKit
+      - package: DebugSwift
     settings:
       configs:
         Debug:

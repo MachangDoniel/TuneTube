@@ -110,6 +110,11 @@ npx wrangler deploy
 
 For active development in debug builds (`#if DEBUG`), the app includes built-in logging utilities:
 
+### `DebugSwift` (In-App Debugger)
+Integrated via Swift Package Manager ([DebugSwift/DebugSwift](https://github.com/DebugSwift/DebugSwift)) and active in Debug builds:
+- **Floating overlay**: Access real-time network inspector, performance metrics (CPU, RAM, FPS), console logs, and Keychain/UserDefaults viewers.
+- Automatically initializes on launch in debug mode (`#if DEBUG`).
+
 ### `NetworkLogger`
 Automatically intercepts and logs all traffic passing through `APIClient`:
 - **HTTP Requests**: Method, URL, query items, and headers (with dedicated formatting for `Authorization: Bearer <token>`).

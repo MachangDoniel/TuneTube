@@ -57,6 +57,14 @@ struct MediaItem: Identifiable, Codable, Hashable, Sendable {
         return nil
     }
 
+    /// The plain `hqdefault.jpg` fallback is 4:3 with black bars above and below
+    /// the 16:9 frame. Scale it by this to crop the bars off in a square.
+    var thumbnailLetterboxScale: CGFloat {
+        guard let url = effectiveThumbnailUrl, url.host == "i.ytimg.com", url.query == nil,
+              url.lastPathComponent == "hqdefault.jpg" else { return 1 }
+        return 4.0 / 3.0
+    }
+
     /// Artist pages show the album under the track; everywhere else the artist
     /// reads better. The server sends both so the client can choose.
     func displaySubtitle(preferring preference: SubtitlePreference = .automatic) -> String? {
@@ -97,6 +105,22 @@ struct PlaylistDetail: Codable, Sendable {
     let description: String?
     let thumbnailUrl: URL?
     let tracks: [MediaItem]
+}
+
+/// A page of a track's radio ("<Song> Mix"). `continuation` fetches the next page.
+struct RadioPage: Codable, Sendable {
+    let title: String?
+    let tracks: [MediaItem]
+    let continuation: String?
+}
+
+struct Lyrics: Codable, Sendable {
+    let text: String
+    let source: String?
+}
+
+struct LyricsResponse: Codable, Sendable {
+    let lyrics: Lyrics?
 }
 
 // MARK: - Remote config

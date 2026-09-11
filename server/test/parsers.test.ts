@@ -5,13 +5,18 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
-  parseAnyItem, parseAnyShelf, parseCardShelf, sectionContents, unwrapItemSections,
+  lyricsBrowseId, parseAnyItem, parseAnyShelf, parseCardShelf, parseLyrics, parseWatchPlaylist,
+  sectionContents, unwrapItemSections,
 } from '../src/innertube/parsers';
 import type { MediaItem, Shelf } from '../src/types';
 
 import category from './fixtures/category-feelgood.json';
 import search from './fixtures/search-dojacat.json';
 import artist from './fixtures/artist-dojacat.json';
+import radio from './fixtures/radio-bazi.json';
+import radioContinuation from './fixtures/radio-bazi-continuation.json';
+import lyricsBazi from './fixtures/lyrics-bazi.json';
+import lyricsUnavailable from './fixtures/lyrics-unavailable.json';
 
 const shelvesOf = (json: any): Shelf[] =>
   sectionContents(json).map(parseAnyShelf).filter(Boolean) as Shelf[];
@@ -110,5 +115,57 @@ describe('artist page', () => {
     const songs = shelves[0].items.filter((i) => i.kind === 'song');
     expect(songs.length).toBeGreaterThan(0);
     for (const s of songs) expect(s.id).toMatch(/^[\w-]{11}$/);
+  });
+});
+
+describe('radio (watch-next queue)', () => {
+  const first = parseWatchPlaylist(radio);
+  const more = parseWatchPlaylist(radioContinuation);
+
+  it('parses the first page with its "Mix" title and a continuation', () => {
+    expect(first.title).toMatch(/Mix$/);
+    expect(first.tracks.length).toBeGreaterThan(20);
+    expect(first.continuation).toBeTruthy();
+    // The seed track leads the queue.
+    expect(first.tracks[0].id).toBe('RObj2xcWuP0');
+  });
+
+  it('parses continuation pages', () => {
+    expect(more.tracks.length).toBeGreaterThan(10);
+    expect(more.tracks[0].id).not.toBe(first.tracks[0].id);
+  });
+
+  it('splits the byline into artist and album, and drops views/likes', () => {
+    const bazi = first.tracks[0];
+    expect(bazi).toMatchObject({
+      title: 'Bazi', kind: 'song', artistName: 'Fazel Deriss', albumName: 'Bazi', durationSeconds: 158,
+    });
+    for (const t of [...first.tracks, ...more.tracks]) {
+      expect(t.id).toMatch(/^[\w-]{11}$/);
+      expect(t.artistName ?? '').not.toMatch(/views|likes|•/);
+      expect(t.thumbnailUrl).toMatch(/^https:\/\//);
+    }
+  });
+
+  it('marks music videos as video and album tracks as song', () => {
+    const kinds = new Set(first.tracks.map((t) => t.kind));
+    expect(kinds.has('song')).toBe(true);
+    expect(kinds.has('video')).toBe(true);
+  });
+
+  it('finds the lyrics page id', () => {
+    expect(lyricsBrowseId(radio)).toMatch(/^MPLY/);
+  });
+});
+
+describe('lyrics', () => {
+  it('parses lyrics text and strips the "Source:" prefix', () => {
+    const lyrics = parseLyrics(lyricsBazi);
+    expect(lyrics?.text.split('\n').length).toBeGreaterThan(5);
+    expect(lyrics?.source).toBe('LyricFind');
+  });
+
+  it('returns null for the "Lyrics not available" page', () => {
+    expect(parseLyrics(lyricsUnavailable)).toBeNull();
   });
 });

@@ -128,4 +128,27 @@ export class InnerTube {
   search(query: string, params?: string) {
     return this.post('search', params ? { query, params } : { query });
   }
+
+  /**
+   * Watch-next panel for a track. With `RDAMVM<videoId>` as the playlist this is
+   * the endless radio ("<Song> Mix") YouTube Music autoplays into.
+   */
+  next(videoId: string, playlistId?: string) {
+    return this.post('next', {
+      videoId,
+      ...(playlistId ? { playlistId } : {}),
+      isAudioOnly: true,
+      enablePersistentPlaylistPanel: true,
+    });
+  }
+
+  /** Continuation tokens here also go in the body, alongside the radio playlistId. */
+  nextContinuation(token: string, playlistId: string) {
+    return this.post('next', {
+      continuation: token,
+      playlistId,
+      isAudioOnly: true,
+      enablePersistentPlaylistPanel: true,
+    });
+  }
 }

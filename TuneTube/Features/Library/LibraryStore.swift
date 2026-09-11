@@ -90,8 +90,10 @@ struct LibraryStore {
     func add(_ item: MediaItem, to playlist: LocalPlaylist) {
         guard !contains(item, in: playlist) else { return }
         let track = LocalTrack(from: item)
-        track.playlist = playlist
         context.insert(track)
+        // Append through the parent so `playlist.tracks` (and any view observing
+        // it) updates immediately, rather than after SwiftData syncs the inverse.
+        playlist.tracks.append(track)
         try? context.save()
     }
 
@@ -100,12 +102,15 @@ struct LibraryStore {
         try? context.save()
     }
 
-    func toggleFavourite(_ item: MediaItem) {
+    func setFavourite(_ item: MediaItem, _ favourite: Bool) {
         let favourites = ensureDefaultPlaylist()
-        if let existing = favourites.tracks.first(where: { $0.videoId == item.id }) {
-            remove(existing)
-        } else {
+        if favourite {
             add(item, to: favourites)
+        } else {
+            let matches = favourites.tracks.filter { $0.videoId == item.id }
+            favourites.tracks.removeAll { $0.videoId == item.id }
+            matches.forEach(context.delete)
+            try? context.save()
         }
     }
 

@@ -209,6 +209,111 @@ export function parseAnyItem(node: any): MediaItem | null {
   return parseTwoRowItem(node) ?? parseResponsiveListItem(node);
 }
 
+/**
+ * Queue row from the `next` endpoint (radio / "Mix"). Byline runs look like
+ * "Artist, Artist & Artist • Album • 2024" (or "• 1.8B views • 19M likes" for videos).
+ */
+export function parsePlaylistPanelItem(node: any): MediaItem | null {
+  // Songs with a music-video counterpart are wrapped; the primary is what plays.
+  const r =
+    node?.playlistPanelVideoRenderer ??
+    node?.playlistPanelVideoWrapperRenderer?.primaryRenderer?.playlistPanelVideoRenderer;
+  if (!r?.videoId) return null;
+
+  const title = runsText(r.title);
+  if (!title) return null;
+
+  const runs: any[] = r.longBylineText?.runs ?? [];
+  const sep = runs.findIndex((run) => (run?.text ?? '').trim() === '•');
+  const artistName =
+    (sep === -1 ? runs : runs.slice(0, sep)).map((run) => run?.text ?? '').join('').trim() ||
+    runsText(r.shortBylineText) ||
+    undefined;
+  const albumName = runs.find(
+    (run) =>
+      run?.navigationEndpoint?.browseEndpoint?.browseEndpointContextSupportedConfigs
+        ?.browseEndpointContextMusicConfig?.pageType === 'MUSIC_PAGE_TYPE_ALBUM',
+  )?.text;
+
+  const videoType =
+    r.navigationEndpoint?.watchEndpoint?.watchEndpointMusicSupportedConfigs
+      ?.watchEndpointMusicConfig?.musicVideoType;
+
+  return {
+    id: r.videoId,
+    // ATV = audio track with album art; OMV/UGC are actual music videos.
+    kind: videoType === 'MUSIC_VIDEO_TYPE_ATV' ? 'song' : 'video',
+    title,
+    subtitle: artistName,
+    thumbnailUrl: pickThumb(r),
+    durationSeconds: parseDuration(runsText(r.lengthText)),
+    ...(artistName ? { artistName } : {}),
+    ...(albumName ? { albumName } : {}),
+  };
+}
+
+export interface WatchPlaylist {
+  title?: string;
+  tracks: MediaItem[];
+  continuation?: string;
+}
+
+/** Radio queue from a `next` response, either the first page or a continuation. */
+export function parseWatchPlaylist(json: any): WatchPlaylist {
+  const queue =
+    watchNextTabs(json)[0]?.tabRenderer?.content?.musicQueueRenderer;
+  const panel =
+    queue?.content?.playlistPanelRenderer ??
+    json?.continuationContents?.playlistPanelContinuation;
+
+  const tracks = ((panel?.contents ?? []) as any[])
+    .map(parsePlaylistPanelItem)
+    .filter(Boolean) as MediaItem[];
+
+  const continuation =
+    panel?.continuations?.[0]?.nextRadioContinuationData?.continuation ??
+    panel?.continuations?.[0]?.nextContinuationData?.continuation;
+
+  return {
+    title: runsText(queue?.header?.musicQueueHeaderRenderer?.subtitle) || undefined,
+    tracks,
+    ...(continuation ? { continuation } : {}),
+  };
+}
+
+/** The Lyrics tab of a `next` response carries the browseId for the lyrics page. */
+export function lyricsBrowseId(json: any): string | undefined {
+  for (const tab of watchNextTabs(json)) {
+    const browse = tab?.tabRenderer?.endpoint?.browseEndpoint;
+    const pageType =
+      browse?.browseEndpointContextSupportedConfigs?.browseEndpointContextMusicConfig?.pageType;
+    if (pageType === 'MUSIC_PAGE_TYPE_TRACK_LYRICS') return browse.browseId;
+  }
+  return undefined;
+}
+
+export interface Lyrics {
+  text: string;
+  source?: string;
+}
+
+/** Lyrics browse page. Returns null for the "Lyrics not available" message page. */
+export function parseLyrics(json: any): Lyrics | null {
+  const shelf = (json?.contents?.sectionListRenderer?.contents ?? [])
+    .find((s: any) => s?.musicDescriptionShelfRenderer)?.musicDescriptionShelfRenderer;
+  const text = runsText(shelf?.description);
+  if (!text) return null;
+  const source = runsText(shelf?.footer).replace(/^Source:\s*/i, '') || undefined;
+  return { text, ...(source ? { source } : {}) };
+}
+
+function watchNextTabs(json: any): any[] {
+  return (
+    json?.contents?.singleColumnMusicWatchNextResultsRenderer?.tabbedRenderer
+      ?.watchNextTabbedResultsRenderer?.tabs ?? []
+  );
+}
+
 /* ---------- shelf / page parsers ---------- */
 
 export function parseCarouselShelf(node: any): Shelf | null {

@@ -43,6 +43,9 @@ final class PlayerEngine {
     private(set) var currentTime: Double = 0
     private(set) var duration: Double = 0
     private(set) var isLoading = false
+    /// True once the last track in the queue has played to its end. The next
+    /// play request restarts the current track instead of resuming at the end.
+    private(set) var hasEnded = false
 
     /// True once something has been loaded, so the mini player can appear.
     var hasTrack: Bool { current != nil }
@@ -57,9 +60,39 @@ final class PlayerEngine {
         index + 1 < queue.count
     }
 
-    var hasPrevious: Bool {
-        index > 0 || currentTime > 3
+    /// Previous always does something: skip back, or restart the first track.
+    var hasPrevious: Bool { current != nil }
+
+    /// Neighbours of the current track, for the swipeable artwork carousel.
+    var previousItem: MediaItem? { queue.indices.contains(index - 1) ? queue[index - 1] : nil }
+    var nextItem: MediaItem? { queue.indices.contains(index + 1) ? queue[index + 1] : nil }
+
+    // MARK: Queue modes
+
+    enum RepeatMode: CaseIterable { case off, all, one }
+
+    private(set) var repeatMode: RepeatMode = .off
+    private(set) var isShuffled = false
+    /// The queue in its original order while shuffled, so unshuffling restores it.
+    private var unshuffledQueue: [MediaItem]?
+
+    /// "Playing from" label, e.g. "Bazi Mix" once autoplay has extended the queue.
+    private(set) var queueTitle: String?
+    /// True while a radio page is being fetched to extend the queue.
+    private(set) var isExtendingQueue = false
+
+    /// Keep playing similar songs (the track's radio) when the queue runs out.
+    var isAutoplayEnabled: Bool = UserDefaults.standard.object(forKey: "player.autoplay") as? Bool ?? true {
+        didSet {
+            UserDefaults.standard.set(isAutoplayEnabled, forKey: "player.autoplay")
+            if isAutoplayEnabled { prefetchAutoplayIfNeeded() }
+        }
     }
+
+    private var radioSeedID: String?
+    private var radioContinuation: String?
+    private var radioTask: Task<Bool, Never>?
+    private var radioGeneration = 0
 
     private var intendedPlaying = false
     private var ticker: AnyCancellable?
@@ -102,20 +135,246 @@ final class PlayerEngine {
 
     func play(_ item: MediaItem, in context: [MediaItem] = []) {
         let playable = (context.isEmpty ? [item] : context).filter(\.isPlayable)
-        queue = playable.isEmpty ? [item] : playable
-        index = queue.firstIndex(of: item) ?? 0
+        let newQueue = playable.isEmpty ? [item] : playable
+        resetRadio()
+        queueTitle = nil
+
+        if isShuffled {
+            // Tapped track first, the rest of its context shuffled behind it.
+            unshuffledQueue = newQueue
+            var rest = newQueue
+            if let i = rest.firstIndex(of: item) { rest.remove(at: i) }
+            queue = [item] + rest.shuffled()
+            index = 0
+        } else {
+            unshuffledQueue = nil
+            queue = newQueue
+            index = queue.firstIndex(of: item) ?? 0
+        }
         loadCurrent()
     }
 
     func next() {
-        guard index + 1 < queue.count else {
-            pause()
-            if duration > 0 { currentTime = duration }
-            updateNowPlaying()
-            return
-        }
+        guard hasNext else { return }
         index += 1
         loadCurrent()
+    }
+
+    /// Jump to a row in the Up Next list.
+    func playFromQueue(at position: Int) {
+        guard queue.indices.contains(position) else { return }
+        index = position
+        loadCurrent()
+    }
+
+    func moveInQueue(from source: IndexSet, to destination: Int) {
+        let playing = current
+        queue.move(fromOffsets: source, toOffset: destination)
+        if let playing, let i = queue.firstIndex(of: playing) { index = i }
+        prefetchAutoplayIfNeeded()
+    }
+
+    /// Removes upcoming/previous rows. The playing track can't be removed.
+    func removeFromQueue(at offsets: IndexSet) {
+        let playing = current
+        let removed = offsets.filter { $0 != index }.map { queue[$0] }
+        queue.remove(atOffsets: IndexSet(offsets.filter { $0 != index }))
+        unshuffledQueue?.removeAll { removed.contains($0) }
+        if let playing, let i = queue.firstIndex(of: playing) { index = i }
+        prefetchAutoplayIfNeeded()
+    }
+
+    func playNext(_ item: MediaItem) {
+        guard item.isPlayable, current != nil else { return play(item) }
+        queue.insert(item, at: index + 1)
+        unshuffledQueue?.append(item)
+    }
+
+    func addToQueue(_ item: MediaItem) {
+        guard item.isPlayable, current != nil else { return play(item) }
+        queue.append(item)
+        unshuffledQueue?.append(item)
+    }
+
+    func toggleShuffle() {
+        isShuffled.toggle()
+        guard let playing = current else { return }
+        if isShuffled {
+            unshuffledQueue = queue
+            queue = Array(queue[...index]) + queue[(index + 1)...].shuffled()
+        } else if let original = unshuffledQueue {
+            // Restore the original order; keep anything added while shuffled at the end.
+            let originalIDs = Set(original.map(\.id))
+            let stillQueued = Set(queue.map(\.id))
+            queue = original.filter { stillQueued.contains($0.id) }
+                + queue.filter { !originalIDs.contains($0.id) }
+            index = queue.firstIndex(of: playing) ?? 0
+            unshuffledQueue = nil
+        }
+    }
+
+    func cycleRepeatMode() {
+        switch repeatMode {
+        case .off: repeatMode = .all
+        case .all: repeatMode = .one
+        case .one: repeatMode = .off
+        }
+        prefetchAutoplayIfNeeded()
+    }
+
+    /// Replaces everything after the current track with its radio ("Start mix").
+    func startMix() {
+        guard let playing = current else { return }
+        queue.removeSubrange((index + 1)...)
+        unshuffledQueue = nil
+        isShuffled = false
+        resetRadio()
+        queueTitle = nil
+        radioSeedID = playing.id
+        Task { await extendQueueWithRadio() }
+    }
+
+    /// Called when the current track plays to its end: repeat, advance, loop,
+    /// autoplay into the radio, or park at the end so the next play restarts it.
+    private func trackDidFinish() {
+        if repeatMode == .one {
+            restartCurrent()
+        } else if hasNext {
+            next()
+        } else if repeatMode == .all, queue.count > 1 {
+            index = 0
+            loadCurrent()
+        } else if isAutoplayEnabled {
+            // Usually already prefetched; if not, fetch now and keep going.
+            let finishedID = current?.id
+            Task {
+                let extended = await extendQueueWithRadio()
+                guard current?.id == finishedID else { return } // user moved on meanwhile
+                if extended, hasNext {
+                    next()
+                } else {
+                    parkAtEnd()
+                }
+            }
+        } else {
+            parkAtEnd()
+        }
+    }
+
+    private func parkAtEnd() {
+        pause()
+        hasEnded = true
+        if duration > 0 { currentTime = duration }
+        updateNowPlaying()
+    }
+
+    // MARK: - Autoplay radio
+
+    private func resetRadio() {
+        radioGeneration += 1
+        radioTask?.cancel()
+        radioTask = nil
+        radioSeedID = nil
+        radioContinuation = nil
+        isExtendingQueue = false
+    }
+
+    /// Fetch the radio ahead of time once we're near the end of the queue, so the
+    /// next track is already there when the current one ends.
+    private func prefetchAutoplayIfNeeded() {
+        guard isAutoplayEnabled, repeatMode == .off, current != nil,
+              index >= queue.count - 2, radioTask == nil else { return }
+        Task { await extendQueueWithRadio() }
+    }
+
+    /// Appends the next radio page to the queue. Returns true if anything was added.
+    @discardableResult
+    private func extendQueueWithRadio() async -> Bool {
+        if let radioTask { return await radioTask.value }
+        // Seed from the last queued track, then keep following that radio's pages.
+        guard let seed = radioSeedID ?? queue.last?.id else { return false }
+        let continuation = radioContinuation
+        let generation = radioGeneration
+
+        isExtendingQueue = true
+        let task = Task<Bool, Never> { [weak self] in
+            guard let self else { return false }
+            // A reset (new queue) while this was in flight makes it stale.
+            defer {
+                if self.radioGeneration == generation {
+                    self.isExtendingQueue = false
+                    self.radioTask = nil
+                }
+            }
+            guard let page = try? await APIClient.shared.radio(for: seed, continuation: continuation),
+                  self.radioGeneration == generation else { return false }
+
+            let queuedIDs = Set(self.queue.map(\.id))
+            let fresh = page.tracks.filter { $0.isPlayable && !queuedIDs.contains($0.id) }
+            self.radioSeedID = seed
+            self.radioContinuation = page.continuation
+            if self.queueTitle == nil { self.queueTitle = page.title }
+            self.queue.append(contentsOf: fresh)
+            self.unshuffledQueue?.append(contentsOf: fresh)
+            return !fresh.isEmpty
+        }
+        radioTask = task
+        return await task.value
+    }
+
+    /// Resumes playback, restarting the track if it already finished.
+    func resume() {
+        guard current != nil else { return }
+        intendedPlaying = true
+        configureAudioSession()
+
+        if hasEnded || (duration > 0 && currentTime >= duration - 0.5) {
+            restartCurrent()
+        } else if isNativeAVPlayer {
+            if avPlayer.currentItem != nil {
+                avPlayer.play()
+                isPlaying = true
+            } else {
+                loadCurrent()
+            }
+        } else {
+            isPlaying = true
+            Task { try? await player.play() }
+        }
+        updateNowPlaying()
+    }
+
+    private func restartCurrent() {
+        hasEnded = false
+        currentTime = 0
+        isPlaying = true
+
+        if isNativeAVPlayer {
+            guard avPlayer.currentItem != nil else {
+                loadCurrent()
+                return
+            }
+            isSeeking = true
+            avPlayer.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    self.isSeeking = false
+                    guard self.intendedPlaying else { return }
+                    self.avPlayer.play()
+                    self.updateNowPlaying()
+                }
+            }
+        } else {
+            // Keep tick() from reading the old end position before the seek lands.
+            isSeeking = true
+            Task {
+                try? await player.seek(to: .init(value: 0, unit: .seconds), allowSeekAhead: true)
+                try? await player.play()
+                try? await Task.sleep(nanoseconds: 350_000_000)
+                isSeeking = false
+                updateNowPlaying()
+            }
+        }
     }
 
     func pause() {
@@ -133,10 +392,16 @@ final class PlayerEngine {
 
     func previous() {
         // Platform convention: restart current track before skipping back.
-        if currentTime > 3 {
+        if currentTime > 3 || index == 0 {
             seek(to: 0)
             return
         }
+        index -= 1
+        loadCurrent()
+    }
+
+    /// Swiping the artwork always changes track (no restart-first rule).
+    func skipToPreviousTrack() {
         guard index > 0 else { return }
         index -= 1
         loadCurrent()
@@ -144,6 +409,7 @@ final class PlayerEngine {
 
     private func loadCurrent() {
         guard let item = current else { return }
+        prefetchAutoplayIfNeeded()
 
         // Immediately silence and stop any currently playing audio/video from the previous track
         avPlayer.pause()
@@ -154,6 +420,7 @@ final class PlayerEngine {
         currentTime = 0
         isPlaying = false
         isLoading = true
+        hasEnded = false
         intendedPlaying = true
         pendingVideoSyncTime = nil
         isSeeking = false
@@ -374,44 +641,15 @@ final class PlayerEngine {
     // MARK: - Transport
 
     func togglePlayPause() {
-        if isNativeAVPlayer {
-            if isPlaying || isLoading {
-                intendedPlaying = false
-                isLoading = false
-                currentLoadTask?.cancel()
-                avPlayer.pause()
-                isPlaying = false
-            } else {
-                intendedPlaying = true
-                configureAudioSession()
-                if avPlayer.currentItem != nil {
-                    avPlayer.play()
-                    isPlaying = true
-                } else if current != nil {
-                    loadCurrent()
-                }
-            }
-            updateNowPlaying()
+        if isPlaying || isLoading {
+            pause()
         } else {
-            Task {
-                if isPlaying || isLoading {
-                    intendedPlaying = false
-                    isLoading = false
-                    currentLoadTask?.cancel()
-                    try? await player.pause()
-                    isPlaying = false
-                } else {
-                    intendedPlaying = true
-                    configureAudioSession()
-                    try? await player.play()
-                    isPlaying = true
-                }
-                updateNowPlaying()
-            }
+            resume()
         }
     }
 
     func seek(to seconds: Double) {
+        hasEnded = false
         currentTime = seconds
         isSeeking = true
         if isNativeAVPlayer {
@@ -477,7 +715,8 @@ final class PlayerEngine {
 
                 // Dual-guarantee auto-advance at the end of track
                 if self.duration > 0, self.currentTime >= self.duration - 0.5, self.isPlaying {
-                    self.next()
+                    self.trackDidFinish()
+                    return
                 }
                 if self.avPlayer.timeControlStatus == .playing {
                     self.isPlaying = true
@@ -537,9 +776,13 @@ final class PlayerEngine {
         // Item track completion notification
         NotificationCenter.default.publisher(for: .AVPlayerItemDidPlayToEndTime)
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
-                guard let self, self.isNativeAVPlayer else { return }
-                self.next()
+            .sink { [weak self] notification in
+                // Ignore stale end events from an item that was already replaced
+                // (e.g. the periodic observer advanced first), which would skip a track.
+                guard let self, self.isNativeAVPlayer,
+                      let endedItem = notification.object as? AVPlayerItem,
+                      endedItem === self.avPlayer.currentItem else { return }
+                self.trackDidFinish()
             }
             .store(in: &cancellables)
 
@@ -618,9 +861,10 @@ final class PlayerEngine {
                         self.isLoading = false
                     }
                 case .ended:
+                    // tick() may already have advanced to the next track, which is loading.
+                    guard !self.isLoading else { return }
                     self.isPlaying = false
-                    self.isLoading = false
-                    self.next()
+                    self.trackDidFinish()
                 default:
                     break
                 }
@@ -765,7 +1009,7 @@ final class PlayerEngine {
 
         // Advance at the end of track
         if duration > 0, currentTime >= duration - 1.0, isPlaying {
-            next()
+            trackDidFinish()
         }
         updateNowPlaying()
     }
@@ -787,36 +1031,13 @@ final class PlayerEngine {
 
         center.playCommand.isEnabled = true
         center.playCommand.addTarget { [weak self] _ in
-            Task { @MainActor in
-                guard let self else { return }
-                self.intendedPlaying = true
-                self.configureAudioSession()
-                if self.isNativeAVPlayer {
-                    self.avPlayer.play()
-                    self.isPlaying = true
-                } else {
-                    try? await self.player.play()
-                    self.isPlaying = true
-                }
-                self.updateNowPlaying()
-            }
+            Task { @MainActor in self?.resume() }
             return .success
         }
 
         center.pauseCommand.isEnabled = true
         center.pauseCommand.addTarget { [weak self] _ in
-            Task { @MainActor in
-                guard let self else { return }
-                self.intendedPlaying = false
-                if self.isNativeAVPlayer {
-                    self.avPlayer.pause()
-                    self.isPlaying = false
-                } else {
-                    try? await self.player.pause()
-                    self.isPlaying = false
-                }
-                self.updateNowPlaying()
-            }
+            Task { @MainActor in self?.pause() }
             return .success
         }
 
@@ -840,19 +1061,10 @@ final class PlayerEngine {
             return .success
         }
 
-        center.skipForwardCommand.preferredIntervals = [10]
-        center.skipForwardCommand.isEnabled = true
-        center.skipForwardCommand.addTarget { [weak self] _ in
-            Task { @MainActor in self?.forward10() }
-            return .success
-        }
-
-        center.skipBackwardCommand.preferredIntervals = [10]
-        center.skipBackwardCommand.isEnabled = true
-        center.skipBackwardCommand.addTarget { [weak self] _ in
-            Task { @MainActor in self?.backward10() }
-            return .success
-        }
+        // Skip ±10s is left disabled: when enabled, iOS shows it on the lock screen
+        // in place of previous/next, which the autoplay queue depends on.
+        center.skipForwardCommand.isEnabled = false
+        center.skipBackwardCommand.isEnabled = false
 
         // Lock screen and Control Center scrubber slider drag handling
         center.changePlaybackPositionCommand.isEnabled = true

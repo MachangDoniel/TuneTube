@@ -173,6 +173,8 @@ server/src/
 | `GET /v1/artist/:browseId` | Header, top songs, albums | 24 h |
 | `GET /v1/playlist/:playlistId` | Full track list | 6 h |
 | `GET /v1/category/:key` | One mood/genre page | 6 h |
+| `GET /v1/radio/:videoId?continuation=` | Track radio ("Mix") for autoplay; pass `continuation` for the next page | 30 m (first page) |
+| `GET /v1/lyrics/:videoId` | Plain lyrics + source, or `null` | 7 d |
 | `GET /v1/config` | Mood chips, trending, kill-switches | 5 m |
 
 All routes accept `gl` and `hl` (region/language), and `?nocache=1` to bypass KV.

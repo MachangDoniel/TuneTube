@@ -5,6 +5,9 @@ import MediaPlayer
 import SwiftUI
 import UIKit
 import YouTubePlayerKit
+import OSLog
+
+private let engineLogger = Logger(subsystem: "com.tunetube.doniel.app", category: "PlayerEngine")
 
 /// Owns playback, background audio, remote lock-screen controls, and queue management.
 ///
@@ -48,6 +51,7 @@ final class PlayerEngine {
     /// Set while the user drags the scrubber so polling doesn't fight the gesture.
     var isScrubbing = false
     private var isSeeking = false
+    private var pendingVideoSyncTime: Double?
 
     var hasNext: Bool {
         index + 1 < queue.count
@@ -82,7 +86,8 @@ final class PlayerEngine {
                 allowsAirPlayForMediaPlayback: true,
                 allowsPictureInPictureMediaPlayback: true,
                 automaticallyAdjustsContentInsets: true
-            )
+            ),
+            isLoggingEnabled: true
         )
 
         configureAudioSession()
@@ -268,11 +273,16 @@ final class PlayerEngine {
         displayMode = mode
         guard let item = current else { return }
 
-        let targetTime = currentTime
+        let currentAudioTime = avPlayer.currentTime().seconds
+        let targetTime = (isNativeAVPlayer && currentAudioTime.isFinite && currentAudioTime > 0) ? currentAudioTime : currentTime
         let wasPlaying = isPlaying || intendedPlaying
+
+        engineLogger.notice("[PlayerEngine] setDisplayMode to \(mode.rawValue): targetTime=\(targetTime), currentAudioTime=\(currentAudioTime), currentTime=\(self.currentTime), wasPlaying=\(wasPlaying)")
 
         if mode == .song {
             // Switching from Video to Song: seamlessly move playback from YouTube iframe to native AVPlayer
+            currentTime = targetTime
+            isSeeking = true
             Task { [weak self] in
                 guard let self else { return }
                 try? await self.player.pause()
@@ -286,6 +296,7 @@ final class PlayerEngine {
                     self.currentResolvedItemID = item.id
                     audioURL = resolved
                 } else {
+                    self.isSeeking = false
                     return
                 }
 
@@ -300,27 +311,49 @@ final class PlayerEngine {
                     self.avPlayer.play()
                     self.isPlaying = true
                 }
+                self.isSeeking = false
                 self.updateNowPlaying()
             }
         } else {
             // Switching from Song to Video: seamlessly move playback from native AVPlayer to YouTube iframe video
+            currentTime = targetTime
+            isSeeking = true
+            pendingVideoSyncTime = targetTime
             Task { [weak self] in
                 guard let self else { return }
                 self.avPlayer.pause()
                 self.isNativeAVPlayer = false
 
                 do {
-                    try await self.player.load(source: .video(id: item.id))
-                    try? await self.player.seek(to: .init(value: targetTime, unit: .seconds), allowSeekAhead: true)
+                    let targetDuration = Measurement<UnitDuration>(value: targetTime, unit: .seconds)
+                    let startSec = Int(targetTime)
+                    engineLogger.notice("[PlayerEngine] Switch to Video: loading \(item.id) at targetTime \(targetTime)s (startSec=\(startSec), wasPlaying=\(wasPlaying))")
+
+                    if wasPlaying {
+                        try await self.player.load(source: .video(id: item.id), startTime: targetDuration)
+                    } else {
+                        try await self.player.cue(source: .video(id: item.id), startTime: targetDuration)
+                    }
+                    // Explicit JS seek to ensure YouTube video element jumps to targetTime
+                    let js: YouTubePlayer.JavaScript = "youtubePlayer.seekTo(\(targetTime), true);"
+                    try? await self.player.evaluate(javaScript: js)
+
                     self.configureAudioSession()
                     if wasPlaying {
                         try? await self.player.play()
                         self.isPlaying = true
+                    } else {
+                        try? await self.player.pause()
+                        self.isPlaying = false
                     }
+                    self.currentTime = targetTime
                     self.updateNowPlaying()
                     self.injectBackgroundAudioFix()
+                    engineLogger.notice("[PlayerEngine] Switch to Video evaluate completed: currentTime=\(self.currentTime)")
                 } catch {
-                    print("[PlayerEngine] Switch to video failed: \(error)")
+                    engineLogger.error("[PlayerEngine] Switch to video failed: \(error)")
+                    self.isSeeking = false
+                    self.pendingVideoSyncTime = nil
                 }
             }
         }
@@ -533,13 +566,31 @@ final class PlayerEngine {
                     self.isPlaying = true
                     self.isLoading = false
                     self.intendedPlaying = true
-                case .paused:
-                    self.isPlaying = false
-                    self.isLoading = false
+
+                    if let pending = self.pendingVideoSyncTime {
+                        self.pendingVideoSyncTime = nil
+                        Task {
+                            let cur = (try? await self.player.getCurrentTime())?.converted(to: .seconds).value ?? 0
+                            engineLogger.notice("[PlayerEngine] YouTube is PLAYING! cur=\(cur), pendingSync=\(pending)")
+                            if cur < pending - 1.0 || cur > pending + 2.0 {
+                                engineLogger.notice("[PlayerEngine] Enforcing seek on PLAYING to \(pending)s because cur=\(cur)s")
+                                try? await self.player.seek(to: .init(value: pending, unit: .seconds), allowSeekAhead: true)
+                                let js: YouTubePlayer.JavaScript = "youtubePlayer.seekTo(\(pending), true);"
+                                try? await self.player.evaluate(javaScript: js)
+                            }
+                            try? await Task.sleep(nanoseconds: 400_000_000)
+                            self.currentTime = pending
+                            self.isSeeking = false
+                            engineLogger.notice("[PlayerEngine] Post-seek settled at currentTime=\(self.currentTime)")
+                        }
+                    }
                 case .buffering:
                     if !self.isPlaying {
                         self.isLoading = true
                     }
+                case .paused:
+                    self.isPlaying = false
+                    self.isLoading = false
                 case .ended:
                     self.isPlaying = false
                     self.isLoading = false
@@ -623,10 +674,19 @@ final class PlayerEngine {
                 if self.displayMode == .video && self.isNativeAVPlayer {
                     // Returning to foreground in Video mode: hand back to YouTube iframe video
                     let targetTime = self.currentTime
+                    self.pendingVideoSyncTime = targetTime
+                    self.isSeeking = true
                     self.avPlayer.pause()
                     self.isNativeAVPlayer = false
                     Task {
-                        try? await self.player.seek(to: .init(value: targetTime, unit: .seconds), allowSeekAhead: true)
+                        let targetDuration = Measurement<UnitDuration>(value: targetTime, unit: .seconds)
+                        if let item = self.current, self.player.source != .video(id: item.id) {
+                            try? await self.player.load(source: .video(id: item.id), startTime: targetDuration)
+                        } else {
+                            try? await self.player.seek(to: targetDuration, allowSeekAhead: true)
+                        }
+                        let js: YouTubePlayer.JavaScript = "youtubePlayer.seekTo(\(targetTime), true);"
+                        try? await self.player.evaluate(javaScript: js)
                         try? await self.player.play()
                         self.isPlaying = true
                         self.updateNowPlaying()
@@ -656,14 +716,16 @@ final class PlayerEngine {
     }
 
     private func tick() async {
-        guard hasTrack, !isScrubbing, !isSeeking, !isNativeAVPlayer else { return }
+        guard hasTrack, !isScrubbing, !isSeeking, !isNativeAVPlayer, pendingVideoSyncTime == nil else { return }
 
         if let time = try? await player.getCurrentTime() {
             let newTime = time.converted(to: .seconds).value
-            if newTime > 0 && newTime != currentTime {
-                isLoading = false
+            if newTime > 0 || currentTime < 1.0 {
+                if newTime > 0 && newTime != currentTime {
+                    isLoading = false
+                }
+                currentTime = newTime
             }
-            currentTime = newTime
         }
 
         if isPlaying {

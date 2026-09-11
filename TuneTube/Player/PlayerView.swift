@@ -122,7 +122,36 @@ struct PlayerView: View {
             // Media Display Area: Live YouTube Video or Square Artwork Card
             VStack(spacing: 14) {
                 if let item = player.current {
-                    if navigator.playerDisplayMode == .video {
+                    let cardSize = min(geometry.size.width - 48, geometry.size.height * 0.40)
+                    let videoHeight = (geometry.size.width - 40) * 9 / 16
+
+                    ZStack {
+                        // Square Artwork Card (Song Mode)
+                        ZStack {
+                            Theme.surfaceHigh
+
+                            CachedImage(url: item.effectiveThumbnailUrl, contentMode: .fill) {
+                                Theme.surfaceHigh
+                                    .overlay(
+                                        Image(systemName: "music.note")
+                                            .font(.system(size: 52))
+                                            .foregroundStyle(Theme.textSecondary)
+                                    )
+                            }
+                        }
+                        .frame(width: cardSize, height: cardSize)
+                        .clipped()
+                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .stroke(Color.white.opacity(0.12), lineWidth: 0.8)
+                        )
+                        .shadow(color: Color.black.opacity(0.45), radius: 18, x: 0, y: 8)
+                        .id(item.id)
+                        .opacity(navigator.playerDisplayMode == .song ? 1.0 : 0.0)
+                        .allowsHitTesting(navigator.playerDisplayMode == .song)
+
+                        // Live YouTube Video (Video Mode)
                         YouTubePlayerView(player.player) { state in
                             switch state {
                             case .idle:
@@ -145,30 +174,11 @@ struct PlayerView: View {
                         )
                         .shadow(color: Color.black.opacity(0.45), radius: 18, x: 0, y: 8)
                         .padding(.horizontal, 20)
-                    } else {
-                        let cardSize = min(geometry.size.width - 48, geometry.size.height * 0.40)
-                        ZStack {
-                            Theme.surfaceHigh
-
-                            CachedImage(url: item.effectiveThumbnailUrl, contentMode: .fill) {
-                                Theme.surfaceHigh
-                                    .overlay(
-                                        Image(systemName: "music.note")
-                                            .font(.system(size: 52))
-                                            .foregroundStyle(Theme.textSecondary)
-                                    )
-                            }
-                        }
-                        .frame(width: cardSize, height: cardSize)
-                        .clipped()
-                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                .stroke(Color.white.opacity(0.12), lineWidth: 0.8)
-                        )
-                        .shadow(color: Color.black.opacity(0.45), radius: 18, x: 0, y: 8)
-                        .id(item.id)
+                        .opacity(navigator.playerDisplayMode == .video ? 1.0 : 0.0)
+                        .allowsHitTesting(navigator.playerDisplayMode == .video)
                     }
+                    .frame(height: navigator.playerDisplayMode == .video ? videoHeight : cardSize)
+                    .animation(.spring(response: 0.32, dampingFraction: 0.82), value: navigator.playerDisplayMode)
                 }
 
                 // Previous and Next directly at the bottom of the video preview with button labels

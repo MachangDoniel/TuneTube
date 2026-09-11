@@ -15,6 +15,9 @@ struct PlayerView: View {
     @State private var showQueue = false
     @State private var showLyrics = false
     @State private var dragOffset: CGFloat = 0
+    /// Translation at which the current pull-down was recognised; offsets are
+    /// measured from here so the player doesn't jump by the recognition distance.
+    @State private var dismissDragBase: CGFloat?
     @State private var isFavourite = false
     @State private var tint: Color = Color(white: 0.14)
     @State private var seekFlash: SeekFlash?
@@ -40,14 +43,15 @@ struct PlayerView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(background)
             .offset(y: max(0, dragOffset))
+            // Global space: this view moves with the drag, so local coordinates would
+            // shift under the finger and make the offset jitter.
             .gesture(
-                DragGesture(minimumDistance: 25)
-                    .onChanged { value in
-                        if value.translation.height > 0 {
-                            dragOffset = value.translation.height
-                        }
+                DragGesture(minimumDistance: 25, coordinateSpace: .global)
+                    .onChanged { value in updateDismissDrag(value.translation.height) }
+                    .onEnded { value in
+                        endDismissDrag(value.translation.height,
+                                       predicted: value.predictedEndTranslation.height)
                     }
-                    .onEnded { value in endDismissDrag(value.translation.height) }
             )
         }
         .ignoresSafeArea()
@@ -298,7 +302,7 @@ struct PlayerView: View {
     /// Locks to an axis on the first movement: horizontal swipes the carousel,
     /// vertical falls through to pull-down-to-close.
     private func artworkDrag(step: CGFloat) -> some Gesture {
-        DragGesture(minimumDistance: 10)
+        DragGesture(minimumDistance: 10, coordinateSpace: .global)
             .onChanged { value in
                 let t = value.translation
                 if dragAxis == nil {
@@ -310,7 +314,7 @@ struct PlayerView: View {
                         || (t.width > 0 && player.previousItem == nil)
                     swipeOffset = blocked ? t.width / 4 : t.width
                 } else {
-                    dragOffset = max(0, t.height)
+                    updateDismissDrag(t.height)
                 }
             }
             .onEnded { value in
@@ -319,7 +323,8 @@ struct PlayerView: View {
                 if axis == .horizontal {
                     finishSwipe(predictedWidth: value.predictedEndTranslation.width, step: step)
                 } else {
-                    endDismissDrag(value.translation.height)
+                    endDismissDrag(value.translation.height,
+                                   predicted: value.predictedEndTranslation.height)
                 }
             }
     }
@@ -493,18 +498,33 @@ struct PlayerView: View {
         library.setFavourite(item, newValue)
     }
 
-    private func endDismissDrag(_ translation: CGFloat) {
-        if translation > 100 {
+    private func updateDismissDrag(_ translation: CGFloat) {
+        if dismissDragBase == nil { dismissDragBase = max(0, translation) }
+        dragOffset = max(0, translation - (dismissDragBase ?? 0))
+    }
+
+    private func endDismissDrag(_ translation: CGFloat, predicted: CGFloat) {
+        let base = dismissDragBase ?? 0
+        dismissDragBase = nil
+        // Close on a long pull or a quick downward flick.
+        if translation - base > 100 || predicted - base > 260 {
             closePlayer()
-        }
-        withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) {
-            dragOffset = 0
+        } else {
+            withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) {
+                dragOffset = 0
+            }
         }
     }
 
     private func closePlayer() {
+        // Slide away from wherever the drag left it; only reset the drag offset
+        // once off-screen, or it springs back up while sliding down.
         withAnimation(.spring(response: 0.36, dampingFraction: 0.88)) {
             navigator.showPlayer = false
+        } completion: {
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) { dragOffset = 0 }
         }
     }
 

@@ -77,40 +77,72 @@ xcodegen generate && open TuneTube.xcodeproj
 
 Run on any iOS 17+ simulator or device.
 
-### Running on a physical device
+### Running on a physical device & environments
 
-`localhost` does **not** work on a real iPhone — the phone resolves it to
-itself, which shows up as `NSURLErrorCannotConnectToHost (-1004)` with
-"Connection refused" on `127.0.0.1`. Two things are needed:
+The project separates API endpoints between **Debug** and **Release** in `project.yml`:
 
-1. Start the Worker with `--ip 0.0.0.0` (above).
-2. Point the app at your Mac's Bonjour name rather than localhost. This is the
-   `API_BASE_URL` build setting in `project.yml`:
+- **Debug** (`http://Doniels-MacBook-Air.local:8799`):
+  For local development on Mac / LAN. `localhost` does **not** work on a real iPhone because the device resolves it to itself (`NSURLErrorCannotConnectToHost (-1004)`). The Mac's `.local` Bonjour name survives DHCP changes and works for both the Simulator and a physical device on the same Wi-Fi.
+- **Release** (`https://tunetube-api.tunetube-app.workers.dev`):
+  Production edge API deployed to Cloudflare Workers with automatic HTTPS. Automatically used when archiving or distributing builds for **TestFlight, App Store Connect, and outside usage**.
 
-   ```yaml
-   API_BASE_URL: http://Your-Mac-Name.local:8799
-   ```
+Resolution order at runtime: `TUNETUBE_API` environment variable → `TuneTubeAPIBaseURL` from Info.plist → `http://localhost:8799`.
 
-   Find yours with `scutil --get LocalHostName`. The `.local` name is used
-   rather than a LAN IP because it survives DHCP changes, and because
-   `NSAllowsLocalNetworking` in `Info.plist` covers it without weakening ATS.
-   The same URL works in the Simulator too, so there is only one setting.
+---
 
-Resolution order at runtime: `TUNETUBE_API` environment variable →
-`TuneTubeAPIBaseURL` from Info.plist → `http://localhost:8799`. In DEBUG builds
-the connection-failure message names the URL it actually tried.
+## Cloudflare Worker Deployment
 
-> **Run from Xcode, not `simctl`**, if you need to test purchases — StoreKit
-> configuration files only apply when launched through the scheme.
+The backend runs on Cloudflare Workers edge network with KV response caching.
+
+To deploy updates to the production worker:
+
+```bash
+cd server
+npx wrangler deploy
+```
+
+- **Production URL**: `https://tunetube-api.tunetube-app.workers.dev`
+- **KV Cache Namespace**: Configured in `server/wrangler.toml` under `CACHE` binding.
+
+---
+
+## Swift Debugging & Network Logging
+
+For active development in debug builds (`#if DEBUG`), the app includes built-in logging utilities:
+
+### `DebugSwift` (In-App Debugger)
+Integrated via Swift Package Manager ([DebugSwift/DebugSwift](https://github.com/DebugSwift/DebugSwift)) and active in Debug builds:
+- **Floating overlay**: Access real-time network inspector, performance metrics (CPU, RAM, FPS), console logs, and Keychain/UserDefaults viewers.
+- Automatically initializes on launch in debug mode (`#if DEBUG`).
+
+### `NetworkLogger`
+Automatically intercepts and logs all traffic passing through `APIClient`:
+- **HTTP Requests**: Method, URL, query items, and headers (with dedicated formatting for `Authorization: Bearer <token>`).
+- **HTTP Responses**: Visual status badge (`🟢 200`, `🟡 304`, `🔴 4xx/5xx`), elapsed duration (e.g. `142ms`), response headers, and formatted JSON bodies.
+- **Bearer Tokens**: Configurable masking (`NetworkLogger.configuration.maskBearerTokens = true/false`).
+- **Release Safe**: Zero performance or memory overhead in Release builds (all logging compiles away).
+
+### `DebugLog`
+Unified Apple system logging (`os.Logger`) across app subsystems:
+- `DebugLog.network` — API calls and network reachability
+- `DebugLog.player` — Playback state and YouTube embed events
+- `DebugLog.auth` — Sign-in with Apple and identity lifecycle
+- `DebugLog.store` — StoreKit 2 subscriptions and paywall transactions
+
+Filter logs in Xcode Console or macOS Console.app using `subsystem:com.tunetube`.
 
 ---
 
 ## Project layout
 
 ```
+.coderabbit.yaml    CodeRabbit review rules and ignore filters
+AGENTS.md           AI agent directives for code reviews
+project.yml         XcodeGen specification (Debug vs Release configurations)
+
 TuneTube/
 ├── App/            TuneTubeApp, RootView (tabs + mini player), Navigator
-├── Core/           APIClient, DiskCache, Models, Theme, AppConfig
+├── Core/           APIClient, NetworkLogger, DebugLog, DiskCache, Models, Theme, AppConfig
 ├── Player/         PlayerEngine, PlayerView, MiniPlayerView
 ├── Features/
 │   ├── Home/       HomeView, MediaCard, ShelfRow

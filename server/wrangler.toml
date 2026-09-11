@@ -9,5 +9,4 @@ YTM_LANG   = "en"
 # Create with: npx wrangler kv namespace create CACHE
 [[kv_namespaces]]
 binding = "CACHE"
-id = "PLACEHOLDER_REPLACE_AFTER_CREATE"
-preview_id = "PLACEHOLDER_PREVIEW"
+id = "41bae203afdd463fa9abe75d330c2441"

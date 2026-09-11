@@ -26,9 +26,15 @@ actor APIClient {
     private let session: URLSession
     private let decoder = JSONDecoder()
     private let cache = DiskCache()
+    private var bearerToken: String?
 
     init(session: URLSession = .shared) {
         self.session = session
+    }
+
+    /// Sets or clears the Bearer token for authenticated requests.
+    func setBearerToken(_ token: String?) {
+        self.bearerToken = token
     }
 
     private func url(_ path: String, _ query: [String: String] = [:]) -> URL {
@@ -41,16 +47,46 @@ actor APIClient {
         return comps.url!
     }
 
+    private func makeRequest(
+        path: String,
+        query: [String: String] = [:],
+        headers: [String: String] = [:],
+        method: String = "GET"
+    ) -> URLRequest {
+        var req = URLRequest(url: url(path, query))
+        req.httpMethod = method
+        req.setValue("application/json", forHTTPHeaderField: "Accept")
+        if let bearerToken {
+            req.setValue("Bearer \(bearerToken)", forHTTPHeaderField: "Authorization")
+        }
+        for (key, value) in headers {
+            req.setValue(value, forHTTPHeaderField: key)
+        }
+        return req
+    }
+
     /// Fetch + decode, writing through to the disk cache. On failure, fall back
     /// to the cached copy rather than showing an empty screen.
     private func get<T: Decodable & Sendable>(
         _ type: T.Type,
         path: String,
         query: [String: String] = [:],
+        headers: [String: String] = [:],
         cacheKey: String
     ) async throws -> T {
+        let request = makeRequest(path: path, query: query, headers: headers)
+        let startTime = CFAbsoluteTimeGetCurrent()
+        #if DEBUG
+        NetworkLogger.logRequest(request)
+        #endif
+
         do {
-            let (data, response) = try await session.data(from: url(path, query))
+            let (data, response) = try await session.data(for: request)
+            let duration = CFAbsoluteTimeGetCurrent() - startTime
+            #if DEBUG
+            NetworkLogger.logResponse(response, data: data, duration: duration, for: request)
+            #endif
+
             guard let http = response as? HTTPURLResponse else {
                 throw APIError.badStatus(-1)
             }
@@ -61,6 +97,11 @@ actor APIClient {
             await cache.write(data, for: cacheKey)
             return value
         } catch {
+            let duration = CFAbsoluteTimeGetCurrent() - startTime
+            #if DEBUG
+            NetworkLogger.logError(error, duration: duration, for: request)
+            #endif
+
             if let data = await cache.read(for: cacheKey),
                let cached = try? decoder.decode(T.self, from: data) {
                 return cached

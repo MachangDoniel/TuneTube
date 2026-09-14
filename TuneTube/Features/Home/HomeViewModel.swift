@@ -14,18 +14,20 @@ final class HomeViewModel {
         await load()
     }
 
-    func load() async {
+    func load(forceRefresh: Bool = false) async {
         isLoading = true
         errorMessage = nil
         do {
-            let config = try? await APIClient.shared.config()
+            let config = try? await APIClient.shared.config(forceRefresh: forceRefresh)
             let hidden = Set(config?.hiddenShelfIds ?? [])
-            let fetched = try await APIClient.shared.home()
+            let fetched = try await APIClient.shared.home(forceRefresh: forceRefresh)
             // hiddenShelfIds is the remote kill-switch for a shelf that breaks.
             shelves = fetched.filter { !hidden.contains($0.id) }
             hasLoaded = true
         } catch {
-            errorMessage = (error as? APIError)?.errorDescription ?? error.localizedDescription
+            if shelves.isEmpty {
+                errorMessage = (error as? APIError)?.errorDescription ?? error.localizedDescription
+            }
         }
         isLoading = false
     }

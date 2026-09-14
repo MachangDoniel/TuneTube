@@ -4,6 +4,7 @@ struct SearchView: View {
     @State private var model = SearchViewModel()
     @Environment(PlayerEngine.self) private var player
     @Environment(Navigator.self) private var navigator
+    @FocusState private var isFocused: Bool
 
     var body: some View {
         ScrollView {
@@ -20,6 +21,7 @@ struct SearchView: View {
                 } else {
                     ForEach(model.shelves) { shelf in
                         ShelfSection(shelf: shelf) { item in
+                            isFocused = false
                             navigator.open(item, within: shelf.items, player: player)
                         }
                     }
@@ -29,6 +31,7 @@ struct SearchView: View {
             .padding(.top, 8)
             .padding(.bottom, 24)
         }
+        .scrollDismissesKeyboard(.interactively)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .screenBackground()
         .task {
@@ -45,19 +48,53 @@ struct SearchView: View {
     }
 
     private var searchField: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass").foregroundStyle(Theme.textSecondary)
-            TextField("Search for songs, albums, or artists...", text: $model.query)
-                .foregroundStyle(Theme.textPrimary)
-                .autocorrectionDisabled()
-                .textInputAutocapitalization(.never)
-                .submitLabel(.search)
-                .onChange(of: model.query) { _, _ in model.queryChanged() }
+        HStack(spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(Theme.textSecondary)
+
+                TextField("Search for songs, albums, or artists...", text: $model.query)
+                    .focused($isFocused)
+                    .foregroundStyle(Theme.textPrimary)
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+                    .submitLabel(.search)
+                    .onSubmit {
+                        isFocused = false
+                        let trimmed = model.query.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !trimmed.isEmpty {
+                            model.searchNow(trimmed)
+                        }
+                    }
+                    .onChange(of: model.query) { _, _ in model.queryChanged() }
+
+                if !model.query.isEmpty {
+                    Button {
+                        model.clear()
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(Theme.textSecondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 11)
+            .background(Theme.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+            if !model.query.isEmpty {
+                Button("Cancel") {
+                    model.clear()
+                    isFocused = false
+                }
+                .font(.system(size: 16))
+                .foregroundStyle(Theme.accent)
+                .buttonStyle(.plain)
+                .transition(.move(edge: .trailing).combined(with: .opacity))
+            }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 11)
-        .background(Theme.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         .padding(.horizontal, 16)
+        .animation(.snappy(duration: 0.2), value: !model.query.isEmpty)
     }
 
     private var browseSection: some View {

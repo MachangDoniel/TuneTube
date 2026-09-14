@@ -57,10 +57,13 @@ struct LibraryView: View {
                 freeLimit = config.freePlaylistLimit
             }
         }
+        // Paywall sheet commented out - everything is free
+        /*
         .sheet(isPresented: $showPaywall) {
             PaywallView().environment(store)
                 .presentationDetents([.height(560)])
         }
+        */
         .sheet(isPresented: $showNewPlaylist) {
             PlaylistCustomizationSheet(defaultColorHex: library.distinctColor(for: "heart.fill")) { name, icon, color in
                 library.createPlaylist(named: name, iconName: icon, colorHex: color)
@@ -98,14 +101,16 @@ struct LibraryView: View {
         .padding(.bottom, 12)
     }
 
-    /// The single paywall trigger: a free user already has Favourites, so any
-    /// second playlist requires Pro.
+    /// Everything is free: create new playlist directly without paywall
     private func attemptCreate() {
+        /*
         if library.canCreatePlaylist(isPro: store.isPro, freeLimit: freeLimit) {
             showNewPlaylist = true
         } else {
             showPaywall = true
         }
+        */
+        showNewPlaylist = true
     }
 
     private func playlistRow(_ playlist: LocalPlaylist) -> some View {

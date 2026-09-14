@@ -30,10 +30,10 @@ struct LibraryStore {
         return (try? context.fetch(descriptor)) ?? []
     }
 
-    /// Free users get exactly the seeded Favourites list; anything beyond that
-    /// is the paywall trigger.
+    /// Everything is free: unlimited playlists allowed for all users.
     func canCreatePlaylist(isPro: Bool, freeLimit: Int) -> Bool {
-        isPro || allPlaylists().count < max(1, freeLimit)
+        // isPro || allPlaylists().count < max(1, freeLimit)
+        true
     }
 
     @discardableResult

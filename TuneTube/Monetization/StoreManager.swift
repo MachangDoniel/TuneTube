@@ -43,15 +43,10 @@ final class StoreManager {
     }
 
     private init() {
-        let cachedLifetime = UserDefaults.standard.bool(forKey: Self.lifetimeKey)
-        let cachedExpiryInterval = UserDefaults.standard.double(forKey: Self.expiryKey)
-        let cachedExpiry = cachedExpiryInterval > 0 ? Date(timeIntervalSince1970: cachedExpiryInterval) : nil
-        let hasActiveSub = cachedExpiry != nil && cachedExpiry! > Date()
-        let cachedPro = UserDefaults.standard.bool(forKey: Self.cacheKey)
-
-        self.hasLifetime = cachedLifetime
-        self.subscriptionExpiry = cachedExpiry
-        self.isPro = Self.forcedPro || cachedLifetime || hasActiveSub || cachedPro
+        // Everything is free: Pro enabled by default for all users
+        self.hasLifetime = true
+        self.subscriptionExpiry = nil
+        self.isPro = true
 
         // Must start at launch, not at paywall presentation: this is how we hear
         // about renewals, Ask-to-Buy approvals and refunds that happen offscreen.

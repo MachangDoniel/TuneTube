@@ -1,17 +1,12 @@
 import Foundation
 
 enum AppConfig {
-    /// Where the Worker lives. Precedence:
-    ///   1. `TUNETUBE_API` environment variable (scheme / CI override)
-    ///   2. `TuneTubeAPIBaseURL` from Info.plist, set by the `API_BASE_URL`
-    ///      build setting in project.yml
-    ///   3. localhost, which only works in the Simulator
-    ///
-    /// Note `localhost` is wrong on a physical device — the phone resolves it to
-    /// itself, which surfaces as NSURLErrorCannotConnectToHost (-1004) with
-    /// "Connection refused" on 127.0.0.1. Use the Mac's `.local` name instead,
-    /// and start the Worker with `--ip 0.0.0.0` so it accepts LAN connections.
-    static let apiBaseURL: URL = {
+    /// Production Cloudflare Worker edge API.
+    static let productionBaseURL = URL(string: "https://tunetube-api.tunetube-app.workers.dev")!
+
+    #if DEBUG
+    /// Where the local Mac Worker lives in debug mode.
+    static let localBaseURL: URL = {
         if let override = ProcessInfo.processInfo.environment["TUNETUBE_API"],
            let url = URL(string: override), url.host != nil {
             return url
@@ -20,8 +15,26 @@ enum AppConfig {
            let url = URL(string: configured), url.host != nil {
             return url
         }
-        return URL(string: "http://localhost:8799")!
+        return URL(string: "http://Doniels-MacBook-Air.local:8799")!
     }()
+
+    /// The initial base URL for API requests. In debug builds, attempts local first.
+    static let initialBaseURL: URL = localBaseURL
+    #else
+    /// In release builds, always use the production Cloudflare edge API.
+    static let initialBaseURL: URL = {
+        if let configured = Bundle.main.object(forInfoDictionaryKey: "TuneTubeAPIBaseURL") as? String,
+           let url = URL(string: configured), url.host != nil {
+            return url
+        }
+        return productionBaseURL
+    }()
+    #endif
+
+    /// Default base URL reference for error messages and backward compatibility.
+    static var apiBaseURL: URL {
+        initialBaseURL
+    }
 
     static let region = "US"
     static let language = "en"

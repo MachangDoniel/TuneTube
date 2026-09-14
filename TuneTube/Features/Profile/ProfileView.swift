@@ -142,6 +142,8 @@ struct ProfileView: View {
 
     private var settingsRows: some View {
         VStack(spacing: 0) {
+            // Restore Purchases commented out - everything is free
+            /*
             row("arrow.clockwise", "Restore Purchases",
                 restoreMessage ?? "Restore your previous purchases") {
                 Task {
@@ -150,6 +152,7 @@ struct ProfileView: View {
                 }
             }
             divider
+            */
             row("star", "Rate App", "Help us improve with your feedback") {}
             divider
             row("checkmark.shield", "Privacy Policy", nil) {}

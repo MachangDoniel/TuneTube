@@ -42,7 +42,7 @@ struct HomeView: View {
         }
         .refreshable {
             recentStore.load()
-            await model.load()
+            await model.load(forceRefresh: true)
         }
     }
 

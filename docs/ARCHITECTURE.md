@@ -18,7 +18,7 @@ flowchart TB
         Store["LibraryStore (SwiftData)\n+ StoreManager (Free Tier)"]
         
         subgraph EngineCore ["Player & Audio Core"]
-            Engine["PlayerEngine\n(@Observable Orchestrator)"]
+            Engine["PlayerEngine\n(Observable Orchestrator)"]
             ModeCheck{"Display Mode / State"}
             AVP["Native AVPlayer\n(High-Bitrate AAC / M4A)"]
             IFrame["YouTube IFrame Player\n(WKWebView Video)"]
@@ -162,9 +162,9 @@ Downloaded media lives in `Documents/OfflineMusic/`, making it visible to the us
 ```mermaid
 flowchart TD
     subgraph Filesystem ["Documents/OfflineMusic/ (isExcludedFromBackup = true)"]
-        AudioDir["audio/\n<videoId>.m4a / <fileName>.mp3"]
-        ArtDir["artwork/\n<videoId>.jpg"]
-        MetaFile["metadata.json\n[DownloadedTrack Registry]"]
+        AudioDir["audio/\n[videoId].m4a / [fileName].mp3"]
+        ArtDir["artwork/\n[videoId].jpg"]
+        MetaFile["metadata.json\n(DownloadedTrack Registry)"]
     end
 
     subgraph SyncEngine ["DownloadManager (Two-Way Sync Engine)"]
@@ -198,7 +198,7 @@ flowchart TD
     UserAction --> UIFiles
     Filesystem --> SyncEngine
     Detection --> MetaFile
-    SyncEngine -->|@MainActor Update| DLView
+    SyncEngine -->|"MainActor UI Update"| DLView
 ```
 
 ### Storage Characteristics

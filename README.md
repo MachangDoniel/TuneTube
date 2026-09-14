@@ -51,7 +51,7 @@ flowchart TB
         UI["SwiftUI UI Layer\n(Home, Search, Library, Player)"]
         
         subgraph EngineCore ["Player Core"]
-            PlayerEngine["PlayerEngine\n(@Observable Orchestrator)"]
+            PlayerEngine["PlayerEngine\n(Observable Orchestrator)"]
             Mode{"Engine Mode"}
             AVP["Native AVPlayer\n(Song Mode & Offline)"]
             IFrame["YouTube IFrame\n(Video Mode)"]

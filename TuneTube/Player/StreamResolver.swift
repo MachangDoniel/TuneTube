@@ -32,7 +32,7 @@ actor StreamResolver {
         let fileURL = cacheDirectory.appendingPathComponent("\(videoID).m4a")
         if let attrs = try? FileManager.default.attributesOfItem(atPath: fileURL.path),
            let size = attrs[.size] as? UInt64, size > 100_000 {
-            sanitizeFragmentedMP4(at: fileURL)
+            Self.sanitizeFragmentedMP4(at: fileURL)
             return fileURL
         }
         return nil
@@ -43,7 +43,7 @@ actor StreamResolver {
     /// Without this, Apple AVFoundation sums the moov duration and fragment durations, incorrectly reporting
     /// 2x duration (e.g. 9:23 instead of 4:41), causing the UI progress bar to end at 50% and stall silently.
     @discardableResult
-    func sanitizeFragmentedMP4(at fileURL: URL) -> Bool {
+    nonisolated static func sanitizeFragmentedMP4(at fileURL: URL) -> Bool {
         guard let handle = try? FileHandle(forUpdating: fileURL) else { return false }
         defer { try? handle.close() }
 
@@ -107,7 +107,7 @@ actor StreamResolver {
         let destinationURL = cacheDirectory.appendingPathComponent("\(videoID).m4a")
         if let attrs = try? FileManager.default.attributesOfItem(atPath: destinationURL.path),
            let size = attrs[.size] as? UInt64, size > 100_000 {
-            sanitizeFragmentedMP4(at: destinationURL)
+            Self.sanitizeFragmentedMP4(at: destinationURL)
             return destinationURL
         }
 
@@ -123,7 +123,7 @@ actor StreamResolver {
 
                 if let attrs = try? FileManager.default.attributesOfItem(atPath: destinationURL.path),
                    let size = attrs[.size] as? UInt64, size > 100_000 {
-                    sanitizeFragmentedMP4(at: destinationURL)
+                    Self.sanitizeFragmentedMP4(at: destinationURL)
                     cleanOldCacheIfNeeded()
                     return destinationURL
                 }

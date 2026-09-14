@@ -7,6 +7,7 @@ import YouTubePlayerKit
 struct PlayerView: View {
     @Environment(PlayerEngine.self) private var player
     @Environment(Navigator.self) private var navigator
+    @Environment(DownloadManager.self) private var downloadManager
     @Environment(\.modelContext) private var context
 
     private var library: LibraryStore { LibraryStore(context: context) }
@@ -14,6 +15,7 @@ struct PlayerView: View {
     @State private var showAddToPlaylist = false
     @State private var showQueue = false
     @State private var showLyrics = false
+    @State private var showRemoveDownloadConfirmation = false
     @State private var dragOffset: CGFloat = 0
     /// Translation at which the current pull-down was recognised; offsets are
     /// measured from here so the player doesn't jump by the recognition distance.
@@ -155,6 +157,21 @@ struct PlayerView: View {
                 }
                 Button { showLyrics = true } label: {
                     Label("Lyrics", systemImage: "quote.bubble")
+                }
+                if let cur = player.current {
+                    if downloadManager.isDownloaded(cur.id) {
+                        Button(role: .destructive) {
+                            downloadManager.deleteDownload(for: cur.id)
+                        } label: {
+                            Label("Remove Download", systemImage: "trash")
+                        }
+                    } else {
+                        Button {
+                            downloadManager.startDownload(item: cur)
+                        } label: {
+                            Label("Download Song", systemImage: "arrow.down.circle")
+                        }
+                    }
                 }
                 Menu {
                     ForEach(PlayerEngine.SleepTimerOption.allCases, id: \.self) { opt in
@@ -432,6 +449,8 @@ struct PlayerView: View {
                         ChipLabel(systemName: "text.badge.plus", title: "Save")
                     }
 
+                    downloadChip(for: current)
+
                     Menu {
                         ForEach(PlayerEngine.SleepTimerOption.allCases, id: \.self) { opt in
                             Button {
@@ -567,6 +586,54 @@ struct PlayerView: View {
             var transaction = Transaction()
             transaction.disablesAnimations = true
             withTransaction(transaction) { dragOffset = 0 }
+        }
+    }
+
+    @ViewBuilder
+    private func downloadChip(for item: MediaItem) -> some View {
+        let status = downloadManager.status(for: item.id)
+        switch status {
+        case .downloaded:
+            Button {
+                showRemoveDownloadConfirmation = true
+            } label: {
+                ChipLabel(
+                    systemName: "checkmark.circle.fill",
+                    title: "Downloaded",
+                    iconColor: Color(hex: "#007AFF")
+                )
+            }
+            .confirmationDialog(
+                "Remove Download",
+                isPresented: $showRemoveDownloadConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("Remove Download", role: .destructive) {
+                    downloadManager.deleteDownload(for: item.id)
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                if let track = downloadManager.track(for: item.id) {
+                    Text("Remove \"\(item.title)\" (\(track.formattedSize)) from offline storage?")
+                } else {
+                    Text("Remove \"\(item.title)\" from offline storage?")
+                }
+            }
+        case .downloading(let progress):
+            ChipLabel(
+                systemName: "arrow.down.circle",
+                title: "\(max(1, Int(progress * 100)))%",
+                iconColor: Color(hex: "#007AFF")
+            )
+        case .notDownloaded, .failed:
+            Button {
+                downloadManager.startDownload(item: item)
+            } label: {
+                ChipLabel(
+                    systemName: "arrow.down.circle",
+                    title: "Download"
+                )
+            }
         }
     }
 

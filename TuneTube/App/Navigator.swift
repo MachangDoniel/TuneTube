@@ -12,6 +12,7 @@ enum Route: Hashable {
     case artist(id: String, name: String)
     case playlist(id: String, title: String)
     case localPlaylist(id: UUID)
+    case downloads
 }
 
 /// Owns tab selection and a navigation path per tab, so pushing a detail screen

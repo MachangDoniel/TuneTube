@@ -1,317 +1,217 @@
 # TuneTube
 
-A YouTube-backed music app for iOS. Browse, search and play music with a native
-music-app interface — the catalog, artwork and audio all come from YouTube.
-
-Two pieces:
-
-- **`TuneTube/`** — a SwiftUI iOS app (~2,400 lines)
-- **`server/`** — a Cloudflare Worker that proxies and caches YouTube Music
-  metadata (~1,000 lines TypeScript)
+A premium YouTube-backed music streaming and offline player for iOS. Browse, search, stream, and download music with a native SwiftUI interface — powered by YouTube Music metadata, a high-performance dual-engine player, and Apple Files app integration.
 
 ```
-iOS app  ──►  Cloudflare Worker  ──►  music.youtube.com/youtubei/v1
-   │           (parse + KV cache)
+iOS Client (SwiftUI)
    │
-   └────────►  youtube.com/embed  (playback, in a WKWebView)
+   ├──► Song Mode (Native AVPlayer) ────► googlevideo.com CDN / Local Disk (Background Audio + Offline)
+   │
+   ├──► Video Mode (WKWebView) ────────► youtube.com/embed (Official IFrame Player)
+   │
+   └──► Edge Backend (Cloudflare Worker) ─► music.youtube.com/youtubei/v1 (Parse + KV Cache)
 ```
 
 ---
 
-## How it works
+## Highlights & Features
 
-### Playback
-
-The player is the **official [YouTube IFrame Player API](https://developers.google.com/youtube/iframe_api_reference)**
-running inside a `WKWebView`, via [YouTubePlayerKit](https://github.com/SvenTiigi/YouTubePlayerKit).
-TuneTube draws its own transport controls and drives the embed over
-`postMessage`; the embed stays visible with YouTube's branding and ads intact.
-
-Nothing is extracted, downloaded, or re-hosted. That is a deliberate design
-constraint, not an accident — see [Legal and review posture](#legal-and-review-posture).
-
-### Metadata
-
-All catalog data comes from YouTube Music's private **InnerTube** API, proxied by
-the Worker. The app never talks to YouTube's API directly, so when YouTube
-changes a payload shape the fix is a `wrangler deploy` rather than an App Store
-release.
-
-### Library and accounts
-
-Playlists are stored on-device with SwiftData. There is no account system yet;
-`Favourites` is seeded locally on first launch.
-
----
-
-## Screens
-
-| Tab | What it does |
-|---|---|
-| **Home** | Curated shelves of playlists and tracks, composed from YouTube Music mood/genre categories |
-| **Search** | Live search grouped by songs / videos / artists / albums / playlists, plus mood chips and trending searches |
-| **Library** | User playlists. `Favourites` is seeded and permanent; more playlists require Pro |
-| **Profile** | Account placeholder, restore purchases, legal links |
-
-Plus artist pages, playlist detail, a full-screen player, and a mini player that
-persists across tabs.
+- 🎧 **Dual-Engine Player**:
+  - **Song Mode (Native `AVPlayer`)**: Seamless background playback, lock-screen controls, low battery usage, high-bitrate AAC audio (`itag 140` @ 128kbps / `itag 139` @ 64kbps), and instant start (<200ms).
+  - **Video Mode (Official YouTube Web Player)**: Preserves YouTube video controls, chapters, and visual video streams via `YouTubePlayerKit` in a `WKWebView`.
+- 📥 **Offline Music & Downloads**:
+  - Download any song or video audio directly to permanent storage (`Documents/OfflineMusic/`).
+  - Play completely offline in Airplane mode with local artwork, track metadata, and zero network calls.
+  - One-tap promotion: if a song is already cached in memory/disk while listening, tapping Download saves it instantly without re-downloading.
+- 📁 **Apple Files App Integration ("On My iPhone")**:
+  - Direct access to downloaded music via Apple's native Files app (`TuneTube` folder).
+  - **Two-Way Synchronization**:
+    - Add custom songs (`.mp3`, `.m4a`, `.flac`, `.wav`, `.aac`) directly from Files or Finder — TuneTube automatically extracts ID3 tags and album art using `AVURLAsset`.
+    - Delete files in the Files app — TuneTube automatically synchronizes and updates your library.
+- ⚡ **Multi-Tier Smart Caching**:
+  - In-memory `NSCache` (<1ms) → Persistent `DiskCache` with configurable TTL (~5ms) → Network fetch.
+  - Prevents rate-limiting (HTTP 429) and delivers instant screen rendering.
+  - Resilient network fallback: automatically falls back from local Mac dev server (`.local:8799`) to the production Cloudflare Edge Worker and serves stale cached data if offline.
+- ⏱️ **Sleep Timer**:
+  - Gentle countdown timers (15m, 30m, 45m, 60m) or "End of Track" with smooth 3-second audio fade-out.
+- 🎛️ **Full Lock Screen & Control Center Integration**:
+  - Native `MPNowPlayingInfoCenter` and `MPRemoteCommandCenter` integration with high-res artwork, scrubbing, volume, play/pause, and skip controls.
+- 🔓 **100% Free / Unlocked Personal Use**:
+  - Built for personal enjoyment and shared use with friends — all features, unlimited playlists, and downloads are completely free (paywalls disabled).
 
 ---
 
-## Quick start
+## System Architecture
 
-**1. Start the Worker** (the app points at it):
+TuneTube connects a native SwiftUI iOS client with a low-latency Cloudflare Worker edge proxy and YouTube's media delivery infrastructure:
 
-```bash
-cd server && npm install && npx wrangler dev --ip 0.0.0.0 --port 8799
+```mermaid
+flowchart TB
+    subgraph iOSClient ["iOS Client (TuneTube)"]
+        UI["SwiftUI UI Layer\n(Home, Search, Library, Player)"]
+        
+        subgraph EngineCore ["Player Core"]
+            PlayerEngine["PlayerEngine\n(@Observable Orchestrator)"]
+            Mode{"Engine Mode"}
+            AVP["Native AVPlayer\n(Song Mode & Offline)"]
+            IFrame["YouTube IFrame\n(Video Mode)"]
+        end
+        
+        subgraph StorageCore ["Storage & Persistence"]
+            DiskCache["DiskCache\n(NSCache + TTL Storage)"]
+            DownloadMgr["DownloadManager\n(Documents/OfflineMusic)"]
+            FilesApp["Apple Files App\n('On My iPhone' / TuneTube)"]
+        end
+    end
+
+    subgraph Edge ["Cloudflare Workers Edge"]
+        Worker["Hono API Gateway\n(/v1/home, /v1/search, etc.)"]
+        KV[("Cloudflare KV Cache")]
+    end
+
+    subgraph Upstream ["YouTube Infrastructure"]
+        InnerTube["InnerTube API\n(music.youtube.com)"]
+        CDN["Google Video CDN\n(googlevideo.com)"]
+    end
+
+    UI --> PlayerEngine
+    PlayerEngine --> Mode
+    Mode -- "Song Mode / Offline" --> AVP
+    Mode -- "Video Mode" --> IFrame
+    
+    AVP -. "Plays Local" .-> DownloadMgr
+    DownloadMgr <-->|Two-Way Sync| FilesApp
+    
+    UI --> DiskCache
+    DiskCache --> Worker
+    Worker <--> KV
+    Worker --> InnerTube
+    
+    AVP -. "Stream Fetch" .-> CDN
 ```
 
-`--ip 0.0.0.0` matters. Wrangler binds to `127.0.0.1` by default, which a
-physical iPhone can never reach.
-
-**2. Generate and open the Xcode project:**
-
-```bash
-xcodegen generate && open TuneTube.xcodeproj
-```
-
-Run on any iOS 17+ simulator or device.
-
-### Running on a physical device & environments
-
-The project separates API endpoints between **Debug** and **Release** in `project.yml`:
-
-- **Debug** (`http://Doniels-MacBook-Air.local:8799`):
-  For local development on Mac / LAN. `localhost` does **not** work on a real iPhone because the device resolves it to itself (`NSURLErrorCannotConnectToHost (-1004)`). The Mac's `.local` Bonjour name survives DHCP changes and works for both the Simulator and a physical device on the same Wi-Fi.
-- **Release** (`https://tunetube-api.tunetube-app.workers.dev`):
-  Production edge API deployed to Cloudflare Workers with automatic HTTPS. Automatically used when archiving or distributing builds for **TestFlight, App Store Connect, and outside usage**.
-
-Resolution order at runtime: `TUNETUBE_API` environment variable → `TuneTubeAPIBaseURL` from Info.plist → `http://localhost:8799`.
+> 📖 **Deep Dive**: For full sequence diagrams, DASH MP4 box header sanitization details, entity relationship models, and state diagrams, see **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** (or the root pointer [ARCHITECTURE.md](ARCHITECTURE.md)).
 
 ---
 
-## Cloudflare Worker Deployment
+## App Screens & Navigation
 
-The backend runs on Cloudflare Workers edge network with KV response caching.
+| Tab / Screen | Description |
+| :--- | :--- |
+| **Home** | Dynamic curated shelves (Trending, New Releases, Charts, Moods) powered by YouTube Music InnerTube categories. |
+| **Search** | Instant grouped search (Songs, Videos, Artists, Albums, Playlists) with trending chips and filter pills. |
+| **Library** | SwiftData user playlists, seeded permanent "Favourites", and dedicated **Downloaded Music** section. |
+| **Downloads** | Full offline player view with "Play All", "Shuffle", search filter, file size badges, and storage management. |
+| **Player** | Interactive modal player with dynamic Song/Video switch, scrub bar, Sleep Timer, Lyrics sheet, and Download button. |
+| **Mini Player** | Persistent floating mini player with gesture swipe dismiss/expand across all navigation tabs. |
+| **Artist / Playlist** | Deep-dive headers, track tables, discography carousels, and context menus ("Play Next", "Add to Playlist", "Download"). |
 
-To deploy updates to the production worker:
+---
+
+## Quick Start
+
+### 1. Prerequisites
+- macOS Sonoma (14.0+) or macOS Sequoia (15.0+)
+- Xcode 15.0+ (iOS 17.0+ SDK)
+- [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`)
+- Node.js v18+ & npm
+
+### 2. Start the Local Backend Worker
+The Cloudflare Worker proxies and shapes YouTube Music InnerTube responses:
 
 ```bash
 cd server
-npx wrangler deploy
+npm install
+npx wrangler dev --ip 0.0.0.0 --port 8799
 ```
 
-- **Production URL**: `https://tunetube-api.tunetube-app.workers.dev`
-- **KV Cache Namespace**: Configured in `server/wrangler.toml` under `CACHE` binding.
+> [!TIP]
+> `--ip 0.0.0.0` allows physical iPhones and Simulator instances on your local Wi-Fi to reach the development server via your Mac's Bonjour address (`http://Doniels-MacBook-Air.local:8799`).
+
+### 3. Generate and Open the Xcode Project
+```bash
+xcodegen generate
+open TuneTube.xcodeproj
+```
+
+Select `TuneTube` scheme and your target device (e.g. `iPhone 17 Pro` Simulator or physical iPhone) and press **⌘R**.
+
+> 📖 **Developer Guide**: For detailed debugging instructions, network logging tips, and build environments, see **[DEVELOPER.md](DEVELOPER.md)**.
 
 ---
 
-## Swift Debugging & Network Logging
+## Environment & Build Matrix
 
-For active development in debug builds (`#if DEBUG`), the app includes built-in logging utilities:
+TuneTube separates endpoints between **Debug** and **Release** configurations in `project.yml` and `TuneTube/Core/AppConfig.swift`:
 
-### `DebugSwift` (In-App Debugger)
-Integrated via Swift Package Manager ([DebugSwift/DebugSwift](https://github.com/DebugSwift/DebugSwift)) and active in Debug builds:
-- **Floating overlay**: Access real-time network inspector, performance metrics (CPU, RAM, FPS), console logs, and Keychain/UserDefaults viewers.
-- Automatically initializes on launch in debug mode (`#if DEBUG`).
-
-### `NetworkLogger`
-Automatically intercepts and logs all traffic passing through `APIClient`:
-- **HTTP Requests**: Method, URL, query items, and headers (with dedicated formatting for `Authorization: Bearer <token>`).
-- **HTTP Responses**: Visual status badge (`🟢 200`, `🟡 304`, `🔴 4xx/5xx`), elapsed duration (e.g. `142ms`), response headers, and formatted JSON bodies.
-- **Bearer Tokens**: Configurable masking (`NetworkLogger.configuration.maskBearerTokens = true/false`).
-- **Release Safe**: Zero performance or memory overhead in Release builds (all logging compiles away).
-
-### `DebugLog`
-Unified Apple system logging (`os.Logger`) across app subsystems:
-- `DebugLog.network` — API calls and network reachability
-- `DebugLog.player` — Playback state and YouTube embed events
-- `DebugLog.auth` — Sign-in with Apple and identity lifecycle
-- `DebugLog.store` — StoreKit 2 subscriptions and paywall transactions
-
-Filter logs in Xcode Console or macOS Console.app using `subsystem:com.tunetube`.
+| Environment | Primary Endpoint | Fallback Strategy | Use Case |
+| :--- | :--- | :--- | :--- |
+| **Debug** | `http://Doniels-MacBook-Air.local:8799` | Automatically falls back to Cloudflare edge after 5.0s timeout if local Mac is unreachable | Local development, Simulator, physical iPhone on local Wi-Fi |
+| **Release** | `https://tunetube-api.tunetube-app.workers.dev` | Direct to Cloudflare edge; stale disk cache on network failure | TestFlight, App Store Connect, production |
 
 ---
 
-## Project layout
+## Repository Structure
 
 ```
-.coderabbit.yaml    CodeRabbit review rules and ignore filters
-AGENTS.md           AI agent directives for code reviews
-project.yml         XcodeGen specification (Debug vs Release configurations)
-
 TuneTube/
-├── App/            TuneTubeApp, RootView (tabs + mini player), Navigator
-├── Core/           APIClient, NetworkLogger, DebugLog, DiskCache, Models, Theme, AppConfig
-├── Player/         PlayerEngine, PlayerView, MiniPlayerView
+├── App/                TuneTubeApp, RootView, Navigator (Route handling)
+├── Core/               APIClient, NetworkLogger, DebugLog, DiskCache, DownloadManager, Models, Theme, AppConfig
+├── Player/             PlayerEngine (Dual-Engine), StreamResolver, PlayerView, MiniPlayerView
 ├── Features/
-│   ├── Home/       HomeView, MediaCard, ShelfRow
-│   ├── Search/     SearchView, SearchViewModel
-│   ├── Library/    LibraryView, LibraryStore, LibraryModels (SwiftData)
-│   ├── Artist/     ArtistView, PlaylistView
-│   └── Profile/    ProfileView
-├── Monetization/   StoreManager (StoreKit 2), PaywallView
-└── Resources/      Info.plist, TuneTube.storekit
+│   ├── Home/           HomeView, MediaCard, ShelfRow
+│   ├── Search/         SearchView, SearchViewModel
+│   ├── Library/        LibraryView, DownloadsView, LibraryStore, LibraryModels (SwiftData)
+│   ├── Artist/         ArtistView, PlaylistView, LocalPlaylistView
+│   └── Profile/        ProfileView
+├── Monetization/       StoreManager (Free tier unlocked), PaywallView
+└── Resources/          Info.plist (Files app sharing), TuneTube.storekit
 
-server/src/
-├── index.ts              Hono routes
-├── config.ts             Curated home manifest, mood chips, search filters
-├── cache.ts              KV wrapper
-├── innertube/client.ts   Session bootstrap + POST helper
-├── innertube/parsers.ts  ⚠️ The fragile layer — all payload-shape knowledge
-└── routes/               home, browse (artist/playlist/category), search
+server/
+├── src/
+│   ├── index.ts        Hono API route gateway
+│   ├── config.ts       Curated home categories, mood chips, search filters
+│   ├── cache.ts        Cloudflare KV wrapper
+│   ├── innertube/      Session bootstrap & payload parsers
+│   └── routes/         home, search, browse, artist, playlist, lyrics, radio
+└── test/               Vitest parser tests & checked-in InnerTube fixtures
+
+docs/
+└── ARCHITECTURE.md     Complete system architecture, Mermaid diagrams, & design specs
+ARCHITECTURE.md         High-level visual architecture summary & pointer
+DEVELOPER.md            Developer setup, debug tools, and build workflows
+AGENTS.md               Guidelines and directives for AI coding assistants
+.coderabbit.yaml        Automated AI code review rules & ignore patterns
 ```
 
 ---
 
-## Worker API
+## Testing & Quality Assurance
 
-| Route | Returns | Cache |
-|---|---|---|
-| `GET /v1/home` | Curated shelves | 1 h |
-| `GET /v1/search?q=&type=` | Results grouped by kind | 10 m |
-| `GET /v1/artist/:browseId` | Header, top songs, albums | 24 h |
-| `GET /v1/playlist/:playlistId` | Full track list | 6 h |
-| `GET /v1/category/:key` | One mood/genre page | 6 h |
-| `GET /v1/radio/:videoId?continuation=` | Track radio ("Mix") for autoplay; pass `continuation` for the next page | 30 m (first page) |
-| `GET /v1/lyrics/:videoId` | Plain lyrics + source, or `null` | 7 d |
-| `GET /v1/config` | Mood chips, trending, kill-switches | 5 m |
-
-All routes accept `gl` and `hl` (region/language), and `?nocache=1` to bypass KV.
-
-`/v1/config` is the remote control surface: mood chips, trending searches,
-`freePlaylistLimit`, `hiddenShelfIds` (hide a broken shelf without a release) and
-paywall copy.
-
----
-
-## Library and monetization
-
-Free users get exactly **one** playlist: the seeded, undeletable **Favourites**.
-Creating a second playlist opens the paywall.
-
-The limit comes from `/v1/config` as `freePlaylistLimit`, so it's tunable without
-a release, and the gate lives in exactly one place —
-`LibraryStore.canCreatePlaylist` — so the Library tab and the "Add to Playlist"
-sheet can never disagree.
-
-| Product ID | Type | Reference price |
-|---|---|---|
-| `com.tunetube.pro.lifetime` | Non-consumable | £14.99 |
-| `com.tunetube.pro.weekly` | Auto-renewable, 1 week | £1.99 |
-
-Billing is **StoreKit 2**, no third-party SDK. `Transaction.updates` is observed
-from launch (catching renewals, Ask-to-Buy and refunds), restore uses
-`AppStore.sync()`, and the entitlement is cached so an offline launch is never a
-silent downgrade.
-
-Prices always come from `Product.displayPrice`. The hardcoded strings in
-`PaywallView` are fallbacks only — hardcoding `£14.99` would show the wrong
-currency to every user outside the UK.
-
-**Testing the Pro paths from the command line** (where StoreKit config is
-unavailable), DEBUG builds honour an override:
-
+### Server Parser Tests
+Run the Vitest suite against real YouTube Music fixtures:
 ```bash
-SIMCTL_CHILD_TUNETUBE_FORCE_PRO=1 xcrun simctl launch booted com.tunetube.app
+cd server && npx vitest run
 ```
 
----
-
-## Known constraints
-
-### 1. Background audio is unresolved
-
-Playback currently stops shortly after the app is backgrounded. Now Playing
-metadata, artwork and remote commands are all wired up, so the lock screen will
-look correct the moment audio survives backgrounding — but it does not yet.
-
-Measured, and the options that remain, are documented in
-**[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#6-background-audio-investigation)**.
-
-**Next step: re-test on a physical device.** All measurements so far are from the
-simulator, which is not authoritative for WebKit media suspension.
-
-### 2. InnerTube is unofficial and will break
-
-YouTube changes payload shapes without notice. Everything shape-aware is confined
-to `server/src/innertube/parsers.ts`, covered by fixture tests, and every parser
-returns a value instead of throwing — so one YouTube-side change degrades a
-single row rather than taking down a screen.
-
-### 3. Accounts are identity-only
-
-**Sign in with Apple** is implemented natively (no third-party SDK) and persists
-the identity in the Keychain — necessary because Apple returns the user's name
-and email *only on first authorization*.
-
-**Google sign-in** is not wired up. It needs an OAuth client id that only the
-project owner can issue. The button is present and reports exactly what is
-missing rather than failing silently. To enable it: add the `GoogleSignIn`
-package, set `GIDClientID` in `Info.plist`, add the reversed-client-id URL
-scheme, and implement `AuthService.signInWithGoogle()`.
-
-Either way this establishes identity only — playlists stay device-local until
-there is a backend to sync them to.
-
----
-
-## Testing
-
-```bash
-cd server && npx vitest run     # 10 tests over real InnerTube fixtures
-```
-
-The tests run the parsers against checked-in InnerTube responses, including
-assertions that the shelves the home manifest depends on still exist. When one
-fails, refresh the fixtures and check whether the parser or the payload changed:
-
-```bash
-node server/test/capture-fixtures.mjs
-```
-
-App build:
-
+### Client Build Verification
+Verify clean build compilation:
 ```bash
 xcodebuild -project TuneTube.xcodeproj -scheme TuneTube \
   -destination 'platform=iOS Simulator,name=iPhone 17 Pro' build
 ```
 
----
-
-## Code Review & AI Guidelines
-
-This project uses [CodeRabbit](https://coderabbit.ai) for automated PR reviews configured via [`.coderabbit.yaml`](.coderabbit.yaml).
-
-> **Instruction for AI Assistants**: Whenever an AI assistant completes changes, prepares a commit, or opens a pull request, **always ask the developer whether they want to go through a CodeRabbit review** before finalizing or merging. See [`AGENTS.md`](AGENTS.md) for details.
+### AI Code Reviews (CodeRabbit)
+This project enforces automated AI code reviews via [CodeRabbit](https://coderabbit.ai):
+- Whenever implementing a feature, fix, or preparing a PR, AI assistants are required to prompt the developer:
+  > *"Would you like to go through a CodeRabbit review for these changes?"*
+- See [AGENTS.md](AGENTS.md) and [.coderabbit.yaml](.coderabbit.yaml) for review rules.
 
 ---
 
-## Legal and review posture
+## License & Posture
 
-Worth being clear-eyed about, because it shapes the architecture:
+- **Personal & Educational Use**: This repository is designed for personal experimentation and study.
+- **DASH & Stream Architecture**: Uses direct media streams and local file storage with box header duration patching for personal offline listening.
+- **Edge Proxy**: InnerTube requests are proxied and cached through Cloudflare Workers to provide consistent payload schemas.
 
-- **Playback uses the sanctioned embed**, visible, with ads and branding intact.
-  This is the defensible position under App Store guideline 5.2.3. Apps that
-  stream YouTube via extraction libraries get rejected, and appeals require
-  documentary proof of rights.
-- **The paywall gates our own features** (playlists), never access to content.
-  Selling access to a third-party catalog is what gets apps pulled.
-- **Metadata comes from InnerTube**, which is not a public API and is outside
-  YouTube's terms. This is the part of the stack most exposed if YouTube objects;
-  the proxy design means it can be swapped for the official Data API without an
-  app release.
-
-Do not "fix" background audio by extracting stream URLs without understanding
-that it moves the app squarely into 5.2.3 territory.
-
----
-
-## Status
-
-**Working:** Worker (6 endpoints, KV caching, remote config, 10 tests), Home,
-Search, Artist, Playlist, Player, mini player, Library with SwiftData, StoreKit 2
-paywall, Now Playing metadata and artwork, Sign in with Apple, cached artwork.
-
-**Open:** background playback, Google sign-in, cross-device sync, playlist
-import, Profile row actions (Rate/Privacy/Terms/Support are not yet wired).

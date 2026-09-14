@@ -371,85 +371,93 @@ final class DownloadManager {
     /// 1. Removes missing files deleted from the Files app.
     /// 2. Discovers new audio files added directly via the Files app, extracting title, artist, and embedded artwork.
     func syncWithDisk() {
-        let fm = FileManager.default
-        var changed = false
+        Task.detached(priority: .utility) { [weak self] in
+            guard let self else { return }
+            let fm = FileManager.default
+            var changed = false
 
-        // 1. Remove tracks whose files were deleted in Files app
-        let existingTracks = downloadedTracks.filter { track in
-            let file = Self.audioDirectory.appendingPathComponent(track.audioFileName)
-            return fm.fileExists(atPath: file.path)
-        }
-        if existingTracks.count != downloadedTracks.count {
-            downloadedTracks = existingTracks
-            changed = true
-        }
-
-        // 2. Discover newly added files in Files app
-        let allowedExtensions: Set<String> = ["m4a", "mp3", "aac", "wav", "flac", "m4b", "aiff"]
-
-        // If user dropped files directly into the root TuneTube/OfflineMusic directory, move to audio/
-        if let rootFiles = try? fm.contentsOfDirectory(at: Self.rootDirectory, includingPropertiesForKeys: nil) {
-            for file in rootFiles where allowedExtensions.contains(file.pathExtension.lowercased()) {
-                let dest = Self.audioDirectory.appendingPathComponent(file.lastPathComponent)
-                try? fm.moveItem(at: file, to: dest)
+            // 1. Check existing tracks against disk
+            let currentTracks = await MainActor.run { self.downloadedTracks }
+            let validTracks = currentTracks.filter { track in
+                let file = Self.audioDirectory.appendingPathComponent(track.audioFileName)
+                return fm.fileExists(atPath: file.path)
             }
-        }
+            if validTracks.count != currentTracks.count {
+                changed = true
+            }
 
-        if let audioFiles = try? fm.contentsOfDirectory(at: Self.audioDirectory, includingPropertiesForKeys: nil) {
-            let existingFileNames = Set(downloadedTracks.map(\.audioFileName))
+            // 2. Discover newly added files in Files app
+            let allowedExtensions: Set<String> = ["m4a", "mp3", "aac", "wav", "flac", "m4b", "aiff"]
 
-            for fileURL in audioFiles where allowedExtensions.contains(fileURL.pathExtension.lowercased()) {
-                let fileName = fileURL.lastPathComponent
-                if !existingFileNames.contains(fileName) {
-                    let asset = AVURLAsset(url: fileURL)
-                    let common = asset.commonMetadata
-                    let title = AVMetadataItem.metadataItems(from: common, withKey: AVMetadataKey.commonKeyTitle, keySpace: .common).first?.stringValue
-                        ?? fileURL.deletingPathExtension().lastPathComponent
-                    let artist = AVMetadataItem.metadataItems(from: common, withKey: AVMetadataKey.commonKeyArtist, keySpace: .common).first?.stringValue
-                    let album = AVMetadataItem.metadataItems(from: common, withKey: AVMetadataKey.commonKeyAlbumName, keySpace: .common).first?.stringValue
-                    let artworkData = AVMetadataItem.metadataItems(from: common, withKey: AVMetadataKey.commonKeyArtwork, keySpace: .common).first?.dataValue
-
-                    let rawDuration = CMTimeGetSeconds(asset.duration)
-                    let duration: Int? = (rawDuration.isFinite && rawDuration > 0) ? Int(rawDuration) : nil
-
-                    let id: String
-                    if fileName.hasSuffix(".m4a") && fileName.count > 4 {
-                        let base = String(fileName.dropLast(4))
-                        id = base.contains(" ") ? "imported_\(abs(fileName.hashValue))" : base
-                    } else {
-                        id = "imported_\(abs(fileName.hashValue))"
-                    }
-
-                    var artworkName: String? = nil
-                    if let artworkData {
-                        let artDest = Self.artworkDirectory.appendingPathComponent("\(id).jpg")
-                        try? artworkData.write(to: artDest, options: .atomic)
-                        artworkName = "\(id).jpg"
-                    }
-
-                    let fileSize = (try? fm.attributesOfItem(atPath: fileURL.path)[.size] as? Int64) ?? 0
-
-                    let importedTrack = DownloadedTrack(
-                        id: id,
-                        title: title,
-                        subtitle: artist,
-                        artistName: artist,
-                        albumName: album,
-                        durationSeconds: duration,
-                        downloadedAt: (try? fm.attributesOfItem(atPath: fileURL.path)[.creationDate] as? Date) ?? Date(),
-                        fileSizeBytes: fileSize,
-                        audioFileName: fileName,
-                        artworkFileName: artworkName
-                    )
-
-                    downloadedTracks.insert(importedTrack, at: 0)
-                    changed = true
+            // If user dropped files directly into the root TuneTube/OfflineMusic directory, move to audio/
+            if let rootFiles = try? fm.contentsOfDirectory(at: Self.rootDirectory, includingPropertiesForKeys: nil) {
+                for file in rootFiles where allowedExtensions.contains(file.pathExtension.lowercased()) {
+                    let dest = Self.audioDirectory.appendingPathComponent(file.lastPathComponent)
+                    try? fm.moveItem(at: file, to: dest)
                 }
             }
-        }
 
-        if changed {
-            saveMetadata()
+            var newlyImported: [DownloadedTrack] = []
+            if let audioFiles = try? fm.contentsOfDirectory(at: Self.audioDirectory, includingPropertiesForKeys: nil) {
+                let existingFileNames = Set(validTracks.map(\.audioFileName))
+
+                for fileURL in audioFiles where allowedExtensions.contains(fileURL.pathExtension.lowercased()) {
+                    let fileName = fileURL.lastPathComponent
+                    if !existingFileNames.contains(fileName) {
+                        let asset = AVURLAsset(url: fileURL)
+                        let common = asset.commonMetadata
+                        let title = AVMetadataItem.metadataItems(from: common, withKey: AVMetadataKey.commonKeyTitle, keySpace: .common).first?.stringValue
+                            ?? fileURL.deletingPathExtension().lastPathComponent
+                        let artist = AVMetadataItem.metadataItems(from: common, withKey: AVMetadataKey.commonKeyArtist, keySpace: .common).first?.stringValue
+                        let album = AVMetadataItem.metadataItems(from: common, withKey: AVMetadataKey.commonKeyAlbumName, keySpace: .common).first?.stringValue
+                        let artworkData = AVMetadataItem.metadataItems(from: common, withKey: AVMetadataKey.commonKeyArtwork, keySpace: .common).first?.dataValue
+
+                        let rawDuration = CMTimeGetSeconds(asset.duration)
+                        let duration: Int? = (rawDuration.isFinite && rawDuration > 0) ? Int(rawDuration) : nil
+
+                        let id: String
+                        if fileName.hasSuffix(".m4a") && fileName.count > 4 {
+                            let base = String(fileName.dropLast(4))
+                            id = base.contains(" ") ? "imported_\(abs(fileName.hashValue))" : base
+                        } else {
+                            id = "imported_\(abs(fileName.hashValue))"
+                        }
+
+                        var artworkName: String? = nil
+                        if let artworkData {
+                            let artDest = Self.artworkDirectory.appendingPathComponent("\(id).jpg")
+                            try? artworkData.write(to: artDest, options: .atomic)
+                            artworkName = "\(id).jpg"
+                        }
+
+                        let fileSize = (try? fm.attributesOfItem(atPath: fileURL.path)[.size] as? Int64) ?? 0
+
+                        let importedTrack = DownloadedTrack(
+                            id: id,
+                            title: title,
+                            subtitle: artist,
+                            artistName: artist,
+                            albumName: album,
+                            durationSeconds: duration,
+                            downloadedAt: (try? fm.attributesOfItem(atPath: fileURL.path)[.creationDate] as? Date) ?? Date(),
+                            fileSizeBytes: fileSize,
+                            audioFileName: fileName,
+                            artworkFileName: artworkName
+                        )
+
+                        newlyImported.append(importedTrack)
+                        changed = true
+                    }
+                }
+            }
+
+            if changed {
+                let finalTracks = newlyImported + validTracks
+                await MainActor.run {
+                    self.downloadedTracks = finalTracks
+                    self.saveMetadata()
+                }
+            }
         }
     }
 }

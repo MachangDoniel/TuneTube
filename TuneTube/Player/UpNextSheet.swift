@@ -50,21 +50,33 @@ struct UpNextSheet: View {
 
             ScrollViewReader { proxy in
                 List {
-                    ForEach(Array(player.queue.enumerated()), id: \.offset) { position, item in
+                    ForEach(player.queue) { item in
+                        let position = player.queue.firstIndex(where: { $0.id == item.id }) ?? 0
+                        let isCurrent = position == player.index
+                        let isPast = position < player.index
+
                         Button { player.playFromQueue(at: position) } label: {
-                            QueueRow(item: item, isCurrent: position == player.index,
-                                     isPlaying: player.isPlaying, isPast: position < player.index)
-                                .contentShape(Rectangle())
+                            QueueRow(
+                                item: item,
+                                isCurrent: isCurrent,
+                                isPlaying: player.isPlaying,
+                                isPast: isPast
+                            )
+                            .contentShape(Rectangle())
                         }
-                            .buttonStyle(.plain)
-                            .id(position)
-                            .listRowBackground(position == player.index ? Color.white.opacity(0.08) : Color.clear)
-                            .listRowInsets(EdgeInsets(top: 6, leading: 20, bottom: 6, trailing: 16))
-                            .listRowSeparator(.hidden)
-                            .deleteDisabled(position == player.index)
+                        .buttonStyle(.plain)
+                        .id(item.id)
+                        .listRowBackground(isCurrent ? Color.white.opacity(0.08) : Color.clear)
+                        .listRowInsets(EdgeInsets(top: 6, leading: 20, bottom: 6, trailing: 16))
+                        .listRowSeparator(.hidden)
+                        .deleteDisabled(isCurrent)
                     }
-                    .onMove { player.moveInQueue(from: $0, to: $1) }
-                    .onDelete { player.removeFromQueue(at: $0) }
+                    .onMove { source, destination in
+                        player.moveInQueue(from: source, to: destination)
+                    }
+                    .onDelete { offsets in
+                        player.removeFromQueue(at: offsets)
+                    }
 
                     if player.isExtendingQueue {
                         HStack(spacing: 10) {
@@ -80,7 +92,11 @@ struct UpNextSheet: View {
                 }
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)
-                .onAppear { proxy.scrollTo(player.index, anchor: .top) }
+                .onAppear {
+                    if let current = player.current {
+                        proxy.scrollTo(current.id, anchor: .top)
+                    }
+                }
             }
         }
         .background(Theme.surface.ignoresSafeArea())

@@ -78,6 +78,9 @@ struct DownloadsView: View {
         .sheet(item: $itemToAddToPlaylist) { item in
             AddToPlaylistSheet(item: item)
         }
+        .onAppear {
+            downloadManager.syncWithDisk()
+        }
     }
 
     // MARK: - Search Bar

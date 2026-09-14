@@ -156,6 +156,27 @@ struct PlayerView: View {
                 Button { showLyrics = true } label: {
                     Label("Lyrics", systemImage: "quote.bubble")
                 }
+                Menu {
+                    ForEach(PlayerEngine.SleepTimerOption.allCases, id: \.self) { opt in
+                        Button {
+                            player.setSleepTimer(opt)
+                        } label: {
+                            HStack {
+                                Text(opt.title)
+                                if player.sleepTimerOption == opt {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    Label(
+                        player.sleepTimerOption == .off
+                            ? "Sleep timer"
+                            : "Sleep timer (\(player.sleepTimerOption.title))",
+                        systemImage: "moon.zzz"
+                    )
+                }
                 if player.current?.artistName != nil {
                     Button { goToArtist() } label: {
                         Label("Go to artist", systemImage: "person")
@@ -409,6 +430,27 @@ struct PlayerView: View {
 
                     Button { showAddToPlaylist = true } label: {
                         ChipLabel(systemName: "text.badge.plus", title: "Save")
+                    }
+
+                    Menu {
+                        ForEach(PlayerEngine.SleepTimerOption.allCases, id: \.self) { opt in
+                            Button {
+                                player.setSleepTimer(opt)
+                            } label: {
+                                HStack {
+                                    Text(opt.title)
+                                    if player.sleepTimerOption == opt {
+                                        Image(systemName: "checkmark")
+                                    }
+                                }
+                            }
+                        }
+                    } label: {
+                        ChipLabel(
+                            systemName: player.sleepTimerOption == .off ? "moon.zzz" : "moon.zzz.fill",
+                            title: player.sleepTimerOption == .off ? "Timer" : player.sleepTimerOption.title,
+                            iconColor: player.sleepTimerOption == .off ? Theme.textPrimary : Theme.accent
+                        )
                     }
 
                     if let url = URL(string: "https://music.youtube.com/watch?v=\(current.id)") {

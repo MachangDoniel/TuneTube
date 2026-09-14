@@ -47,11 +47,15 @@ struct AddToPlaylistSheet: View {
 
                 Section {
                     Button {
+                        // Everything is free - paywall completely hidden
+                        /*
                         if library.canCreatePlaylist(isPro: store.isPro, freeLimit: freeLimit) {
                             showNewPlaylist = true
                         } else {
                             showPaywall = true
                         }
+                        */
+                        showNewPlaylist = true
                     } label: {
                         Label("New Playlist", systemImage: "plus")
                             .foregroundStyle(Theme.accent)
@@ -75,9 +79,12 @@ struct AddToPlaylistSheet: View {
                 freeLimit = config.freePlaylistLimit
             }
         }
+        // Paywall sheet commented out - everything is free
+        /*
         .sheet(isPresented: $showPaywall) {
             PaywallView().environment(store).presentationDetents([.height(560)])
         }
+        */
         .sheet(isPresented: $showNewPlaylist) {
             PlaylistCustomizationSheet(defaultColorHex: library.distinctColor(for: "heart.fill")) { name, icon, color in
                 let playlist = library.createPlaylist(named: name, iconName: icon, colorHex: color)

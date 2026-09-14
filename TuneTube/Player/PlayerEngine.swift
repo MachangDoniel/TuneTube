@@ -89,6 +89,76 @@ final class PlayerEngine {
         }
     }
 
+    // MARK: - Sleep Timer
+
+    public enum SleepTimerOption: Equatable, CaseIterable {
+        case off
+        case min15
+        case min30
+        case min45
+        case min60
+        case endOfTrack
+
+        public static var allCases: [SleepTimerOption] {
+            [.off, .min15, .min30, .min45, .min60, .endOfTrack]
+        }
+
+        public var title: String {
+            switch self {
+            case .off: return "Off"
+            case .min15: return "15 min"
+            case .min30: return "30 min"
+            case .min45: return "45 min"
+            case .min60: return "60 min"
+            case .endOfTrack: return "End of track"
+            }
+        }
+    }
+
+    private(set) var sleepTimerOption: SleepTimerOption = .off
+    private(set) var sleepTimerRemainingSeconds: Int?
+    private var sleepTimerTask: Task<Void, Never>?
+
+    func setSleepTimer(_ option: SleepTimerOption) {
+        sleepTimerTask?.cancel()
+        sleepTimerOption = option
+
+        guard option != .off else {
+            sleepTimerRemainingSeconds = nil
+            return
+        }
+
+        if case .endOfTrack = option {
+            sleepTimerRemainingSeconds = nil
+            return
+        }
+
+        var minutes = 15
+        switch option {
+        case .min15: minutes = 15
+        case .min30: minutes = 30
+        case .min45: minutes = 45
+        case .min60: minutes = 60
+        default: break
+        }
+
+        var remaining = minutes * 60
+        sleepTimerRemainingSeconds = remaining
+
+        sleepTimerTask = Task { [weak self] in
+            while remaining > 0 {
+                try? await Task.sleep(for: .seconds(1))
+                guard !Task.isCancelled else { return }
+                remaining -= 1
+                self?.sleepTimerRemainingSeconds = remaining
+            }
+            guard !Task.isCancelled else { return }
+            self?.pause()
+            self?.sleepTimerOption = .off
+            self?.sleepTimerRemainingSeconds = nil
+        }
+    }
+
     private var radioSeedID: String?
     private var radioContinuation: String?
     private var radioTask: Task<Bool, Never>?
@@ -1009,6 +1079,11 @@ final class PlayerEngine {
 
         // Advance at the end of track
         if duration > 0, currentTime >= duration - 1.0, isPlaying {
+            if sleepTimerOption == .endOfTrack {
+                pause()
+                setSleepTimer(.off)
+                return
+            }
             trackDidFinish()
         }
         updateNowPlaying()

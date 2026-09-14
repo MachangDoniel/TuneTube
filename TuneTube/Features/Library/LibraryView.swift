@@ -5,6 +5,7 @@ struct LibraryView: View {
     @Environment(\.modelContext) private var context
     @Environment(StoreManager.self) private var store
     @Environment(Navigator.self) private var navigator
+    @Environment(DownloadManager.self) private var downloadManager
 
     @Query(sort: \LocalPlaylist.createdAt) private var playlists: [LocalPlaylist]
 
@@ -19,16 +20,46 @@ struct LibraryView: View {
         VStack(spacing: 0) {
             header
 
-            if playlists.isEmpty {
-                emptyState
-            } else {
-                List {
-                    ForEach(playlists) { playlist in
-                        Button {
-                            navigator.push(.localPlaylist(id: playlist.id))
-                        } label: {
-                            playlistRow(playlist)
+            List {
+                // Downloaded Music Row
+                Button {
+                    navigator.push(.downloads)
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "arrow.down.circle.fill")
+                            .font(.system(size: 20))
+                            .foregroundStyle(Color(hex: "#007AFF"))
+                            .frame(width: 46, height: 46)
+                            .background(Color(hex: "#007AFF").opacity(0.15), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Downloaded")
+                                .font(.system(size: 16, weight: .medium))
+                                .foregroundStyle(Theme.textPrimary)
+                            Text(downloadManager.downloadedTracks.isEmpty
+                                ? "No offline songs"
+                                : "\(downloadManager.downloadedTracks.count) \(downloadManager.downloadedTracks.count == 1 ? "song" : "songs") • \(downloadManager.formattedTotalStorage)")
+                                .font(.system(size: 13))
+                                .foregroundStyle(Theme.textSecondary)
                         }
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 13))
+                            .foregroundStyle(Theme.textSecondary.opacity(0.6))
+                    }
+                    .padding(.vertical, 4)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .listRowBackground(Color.clear)
+                .listRowSeparatorTint(Color.white.opacity(0.06))
+
+                ForEach(playlists) { playlist in
+                    Button {
+                        navigator.push(.localPlaylist(id: playlist.id))
+                    } label: {
+                        playlistRow(playlist)
+                    }
                         .buttonStyle(.plain)
                         .listRowBackground(Color.clear)
                         .listRowSeparatorTint(Color.white.opacity(0.06))
@@ -47,7 +78,6 @@ struct LibraryView: View {
                 }
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)
-            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .screenBackground()

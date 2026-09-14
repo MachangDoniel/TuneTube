@@ -52,6 +52,27 @@ struct PlaylistView: View {
                         TrackRow(item: track) {
                             navigator.open(track, within: tracks, player: player)
                         }
+                        .contextMenu {
+                            Button {
+                                player.playNext(track)
+                            } label: { Label("Play Next", systemImage: "text.line.first.and.arrowtriangle.forward") }
+
+                            Button {
+                                player.addToQueue(track)
+                            } label: { Label("Add to Queue", systemImage: "text.badge.plus") }
+
+                            Divider()
+
+                            if DownloadManager.shared.isDownloaded(track.id) {
+                                Button(role: .destructive) {
+                                    DownloadManager.shared.deleteDownload(for: track.id)
+                                } label: { Label("Remove Download", systemImage: "trash") }
+                            } else {
+                                Button {
+                                    DownloadManager.shared.startDownload(item: track)
+                                } label: { Label("Download", systemImage: "arrow.down.circle") }
+                            }
+                        }
                     }
                 } else if model.isLoading {
                     VStack(spacing: 8) {

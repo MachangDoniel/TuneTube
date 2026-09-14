@@ -54,6 +54,14 @@ actor ImageLoader {
     func image(for url: URL) async -> UIImage? {
         if let hit = cached(url) { return hit }
 
+        if url.isFileURL {
+            if let data = try? Data(contentsOf: url), let image = UIImage(data: data) {
+                memory.store(image, for: url)
+                return image
+            }
+            return nil
+        }
+
         // Coalesce: if this URL is already loading, await the same task rather
         // than starting a second identical request.
         if let existing = inFlight[url] { return await existing.value }

@@ -518,7 +518,13 @@ final class PlayerEngine {
                 self.isNativeAVPlayer = true
 
                 do {
-                    let cachedLocalURL = await StreamResolver.shared.getCachedAudioFileURL(for: item.id)
+                    let offlineURL = DownloadManager.shared.localAudioURL(for: item.id)
+                    let cachedLocalURL: URL?
+                    if let offlineURL {
+                        cachedLocalURL = offlineURL
+                    } else {
+                        cachedLocalURL = await StreamResolver.shared.getCachedAudioFileURL(for: item.id)
+                    }
 
                     let initialURL: URL
                     let isLocal: Bool
@@ -984,6 +990,10 @@ final class PlayerEngine {
                         let audioURL: URL
                         if let cached = self.currentResolvedStreamURL, self.currentResolvedItemID == item.id {
                             audioURL = cached
+                        } else if let offline = DownloadManager.shared.localAudioURL(for: item.id) {
+                            self.currentResolvedStreamURL = offline
+                            self.currentResolvedItemID = item.id
+                            audioURL = offline
                         } else if let resolved = try? await StreamResolver.shared.resolveAudioFileURL(for: item.id) {
                             self.currentResolvedStreamURL = resolved
                             self.currentResolvedItemID = item.id
@@ -1175,6 +1185,13 @@ final class PlayerEngine {
 
     /// Fetches thumbnail once per track for lock screen.
     private func loadArtwork(for item: MediaItem) {
+        if let localImage = DownloadManager.shared.localArtworkImage(for: item.id) {
+            let artwork = MPMediaItemArtwork(boundsSize: localImage.size) { _ in localImage }
+            self.artworkCache = (item.id, artwork)
+            self.updateNowPlaying()
+            return
+        }
+
         guard let url = item.effectiveThumbnailUrl else { return }
         Task { [weak self] in
             guard let image = await ImageLoader.shared.image(for: url) else { return }

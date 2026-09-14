@@ -76,9 +76,19 @@ struct LocalPlaylistView: View {
                             navigator.open(item, within: tracks.map(\.asMediaItem), player: player)
                         }
                         .contextMenu {
+                            if DownloadManager.shared.isDownloaded(item.id) {
+                                Button(role: .destructive) {
+                                    DownloadManager.shared.deleteDownload(for: item.id)
+                                } label: { Label("Remove Download", systemImage: "trash") }
+                            } else {
+                                Button {
+                                    DownloadManager.shared.startDownload(item: item)
+                                } label: { Label("Download", systemImage: "arrow.down.circle") }
+                            }
+
                             Button(role: .destructive) {
                                 library.remove(track)
-                            } label: { Label("Remove", systemImage: "trash") }
+                            } label: { Label("Remove from Playlist", systemImage: "minus.circle") }
                         }
                     }
                 }

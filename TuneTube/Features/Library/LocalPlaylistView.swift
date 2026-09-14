@@ -18,6 +18,7 @@ struct LocalPlaylistView: View {
     private var playlist: LocalPlaylist? { playlists.first }
     private var library: LibraryStore { LibraryStore(context: context) }
     @State private var showEditSheet = false
+    @State private var itemToRemoveDownload: MediaItem?
 
     var body: some View {
         ScrollView {
@@ -78,7 +79,7 @@ struct LocalPlaylistView: View {
                         .contextMenu {
                             if DownloadManager.shared.isDownloaded(item.id) {
                                 Button(role: .destructive) {
-                                    DownloadManager.shared.deleteDownload(for: item.id)
+                                    itemToRemoveDownload = item
                                 } label: { Label("Remove Download", systemImage: "trash") }
                             } else {
                                 Button {
@@ -98,6 +99,32 @@ struct LocalPlaylistView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .screenBackground()
+        .confirmationDialog(
+            "Remove Download",
+            isPresented: Binding(
+                get: { itemToRemoveDownload != nil },
+                set: { if !$0 { itemToRemoveDownload = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            if let item = itemToRemoveDownload {
+                Button("Remove Download", role: .destructive) {
+                    DownloadManager.shared.deleteDownload(for: item.id)
+                    itemToRemoveDownload = nil
+                }
+            }
+            Button("Cancel", role: .cancel) {
+                itemToRemoveDownload = nil
+            }
+        } message: {
+            if let item = itemToRemoveDownload {
+                if let track = DownloadManager.shared.track(for: item.id) {
+                    Text("Remove “\(item.title)” (\(track.formattedSize)) from offline storage?")
+                } else {
+                    Text("Remove “\(item.title)” from offline storage?")
+                }
+            }
+        }
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             if let p = playlist, !p.isDefault {

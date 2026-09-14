@@ -18,6 +18,7 @@ struct PlaylistView: View {
     let title: String
 
     @State private var model = PlaylistViewModel()
+    @State private var itemToRemoveDownload: MediaItem?
     @Environment(PlayerEngine.self) private var player
     @Environment(Navigator.self) private var navigator
 
@@ -65,7 +66,7 @@ struct PlaylistView: View {
 
                             if DownloadManager.shared.isDownloaded(track.id) {
                                 Button(role: .destructive) {
-                                    DownloadManager.shared.deleteDownload(for: track.id)
+                                    itemToRemoveDownload = track
                                 } label: { Label("Remove Download", systemImage: "trash") }
                             } else {
                                 Button {
@@ -99,6 +100,32 @@ struct PlaylistView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .screenBackground()
+        .confirmationDialog(
+            "Remove Download",
+            isPresented: Binding(
+                get: { itemToRemoveDownload != nil },
+                set: { if !$0 { itemToRemoveDownload = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            if let item = itemToRemoveDownload {
+                Button("Remove Download", role: .destructive) {
+                    DownloadManager.shared.deleteDownload(for: item.id)
+                    itemToRemoveDownload = nil
+                }
+            }
+            Button("Cancel", role: .cancel) {
+                itemToRemoveDownload = nil
+            }
+        } message: {
+            if let item = itemToRemoveDownload {
+                if let track = DownloadManager.shared.track(for: item.id) {
+                    Text("Remove “\(item.title)” (\(track.formattedSize)) from offline storage?")
+                } else {
+                    Text("Remove “\(item.title)” from offline storage?")
+                }
+            }
+        }
         .navigationBarTitleDisplayMode(.inline)
         .task { await model.load(playlistId) }
     }

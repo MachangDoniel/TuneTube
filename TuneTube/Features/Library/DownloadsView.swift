@@ -8,6 +8,7 @@ struct DownloadsView: View {
     @State private var downloadManager = DownloadManager.shared
     @State private var searchQuery = ""
     @State private var showDeleteAllAlert = false
+    @State private var trackToRemove: DownloadedTrack?
     @State private var itemToAddToPlaylist: MediaItem?
 
     private var tracks: [DownloadedTrack] {
@@ -74,6 +75,28 @@ struct DownloadsView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("This will delete all \(downloadManager.formattedTotalStorage) of offline music from your device.")
+        }
+        .confirmationDialog(
+            "Remove Download",
+            isPresented: Binding(
+                get: { trackToRemove != nil },
+                set: { if !$0 { trackToRemove = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            if let track = trackToRemove {
+                Button("Remove Download", role: .destructive) {
+                    downloadManager.deleteDownload(for: track.id)
+                    trackToRemove = nil
+                }
+            }
+            Button("Cancel", role: .cancel) {
+                trackToRemove = nil
+            }
+        } message: {
+            if let track = trackToRemove {
+                Text("Remove “\(track.title)” (\(track.formattedSize)) from offline storage?")
+            }
         }
         .sheet(item: $itemToAddToPlaylist) { item in
             AddToPlaylistSheet(item: item)
@@ -194,10 +217,6 @@ struct DownloadsView: View {
             ForEach(tracks) { track in
                 let item = track.asMediaItem
                 downloadRow(track: track, item: item)
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        navigator.open(item, within: tracks.map(\.asMediaItem), player: player)
-                    }
                     .contextMenu {
                         Button {
                             navigator.open(item, within: tracks.map(\.asMediaItem), player: player)
@@ -218,7 +237,7 @@ struct DownloadsView: View {
                         Divider()
 
                         Button(role: .destructive) {
-                            downloadManager.deleteDownload(for: track.id)
+                            trackToRemove = track
                         } label: { Label("Remove Download", systemImage: "trash") }
                     }
             }
@@ -226,55 +245,97 @@ struct DownloadsView: View {
     }
 
     private func downloadRow(track: DownloadedTrack, item: MediaItem) -> some View {
-        HStack(spacing: 12) {
-            CachedImage(url: item.thumbnailUrl, contentMode: .fill) {
-                Rectangle()
-                    .fill(Theme.surface)
-                    .overlay(
-                        Image(systemName: "music.note")
-                            .font(.system(size: 18))
-                            .foregroundStyle(Theme.textSecondary)
-                    )
-            }
-            .frame(width: 48, height: 48)
-            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        HStack(spacing: 8) {
+            // Main tap area to play the track
+            Button {
+                navigator.open(item, within: tracks.map(\.asMediaItem), player: player)
+            } label: {
+                HStack(spacing: 12) {
+                    CachedImage(url: item.thumbnailUrl, contentMode: .fill) {
+                        Rectangle()
+                            .fill(Theme.surface)
+                            .overlay(
+                                Image(systemName: "music.note")
+                                    .font(.system(size: 18))
+                                    .foregroundStyle(Theme.textSecondary)
+                            )
+                    }
+                    .frame(width: 48, height: 48)
+                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
 
-            VStack(alignment: .leading, spacing: 3) {
-                Text(track.title)
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(Theme.textPrimary)
-                    .lineLimit(1)
-
-                HStack(spacing: 6) {
-                    if let artist = track.artistName ?? track.subtitle {
-                        Text(artist)
-                            .font(.system(size: 13))
-                            .foregroundStyle(Theme.textSecondary)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(track.title)
+                            .font(.system(size: 15, weight: .medium))
+                            .foregroundStyle(Theme.textPrimary)
                             .lineLimit(1)
+
+                        HStack(spacing: 6) {
+                            if let artist = track.artistName ?? track.subtitle {
+                                Text(artist)
+                                    .font(.system(size: 13))
+                                    .foregroundStyle(Theme.textSecondary)
+                                    .lineLimit(1)
+                            }
+
+                            Text("•")
+                                .font(.system(size: 10))
+                                .foregroundStyle(Theme.textSecondary.opacity(0.6))
+
+                            Text(track.formattedSize)
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(Theme.textSecondary.opacity(0.8))
+                        }
                     }
 
-                    Text("•")
-                        .font(.system(size: 10))
-                        .foregroundStyle(Theme.textSecondary.opacity(0.6))
-
-                    Text(track.formattedSize)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(Theme.textSecondary.opacity(0.8))
+                    Spacer()
                 }
-            }
-
-            Spacer()
-
-            Button(role: .destructive) {
-                downloadManager.deleteDownload(for: track.id)
-            } label: {
-                Image(systemName: "arrow.down.circle.fill")
-                    .font(.system(size: 18))
-                    .foregroundStyle(Color(hex: "#007AFF"))
-                    .frame(width: 36, height: 36)
-                    .contentShape(Rectangle())
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+
+            // Trailing actions: Download badge (with confirm) & More menu
+            HStack(spacing: 2) {
+                Button {
+                    trackToRemove = track
+                } label: {
+                    Image(systemName: "arrow.down.circle.fill")
+                        .font(.system(size: 16))
+                        .foregroundStyle(Color(hex: "#007AFF"))
+                        .frame(width: 32, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+
+                Menu {
+                    Button {
+                        navigator.open(item, within: tracks.map(\.asMediaItem), player: player)
+                    } label: { Label("Play", systemImage: "play.fill") }
+
+                    Button {
+                        player.playNext(item)
+                    } label: { Label("Play Next", systemImage: "text.line.first.and.arrowtriangle.forward") }
+
+                    Button {
+                        player.addToQueue(item)
+                    } label: { Label("Add to Queue", systemImage: "text.badge.plus") }
+
+                    Button {
+                        itemToAddToPlaylist = item
+                    } label: { Label("Add to Playlist", systemImage: "plus.rectangle.on.folder") }
+
+                    Divider()
+
+                    Button(role: .destructive) {
+                        trackToRemove = track
+                    } label: { Label("Remove Download", systemImage: "trash") }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 14))
+                        .foregroundStyle(Theme.textSecondary)
+                        .frame(width: 32, height: 44)
+                        .contentShape(Rectangle())
+                }
+            }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 6)

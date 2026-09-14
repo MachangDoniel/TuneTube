@@ -161,7 +161,7 @@ struct PlayerView: View {
                 if let cur = player.current {
                     if downloadManager.isDownloaded(cur.id) {
                         Button(role: .destructive) {
-                            downloadManager.deleteDownload(for: cur.id)
+                            showRemoveDownloadConfirmation = true
                         } label: {
                             Label("Remove Download", systemImage: "trash")
                         }

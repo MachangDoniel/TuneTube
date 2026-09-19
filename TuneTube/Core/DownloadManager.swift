@@ -248,7 +248,10 @@ final class DownloadManager {
 
             downloadStates[item.id] = .downloading(progress: 0.35)
             var request = URLRequest(url: streamURL)
-            request.timeoutInterval = 60
+            // Long tracks (podcasts, mixes, hour+ videos) can be tens of MB and take
+            // well over a minute once YouTube's initial unthrottled burst window ends,
+            // so a short timeout here fails long downloads even though data is still arriving.
+            request.timeoutInterval = 600
 
             let (tempURL, response) = try await URLSession.shared.download(for: request)
             guard let httpResponse = response as? HTTPURLResponse,
@@ -304,6 +307,27 @@ final class DownloadManager {
         downloadedTracks.removeAll { $0.id == item.id }
         downloadedTracks.insert(newTrack, at: 0)
         saveMetadata()
+    }
+
+    // MARK: - Import
+
+    /// Copies user-selected audio or video files (e.g. picked via the Files app
+    /// importer) into offline storage and registers them via `syncWithDisk`.
+    func importMediaFiles(from urls: [URL]) {
+        Task.detached(priority: .utility) { [weak self] in
+            guard let self else { return }
+            let fm = FileManager.default
+            for url in urls {
+                let didAccess = url.startAccessingSecurityScopedResource()
+                defer { if didAccess { url.stopAccessingSecurityScopedResource() } }
+                let dest = Self.audioDirectory.appendingPathComponent(url.lastPathComponent)
+                try? fm.removeItem(at: dest)
+                try? fm.copyItem(at: url, to: dest)
+            }
+            await MainActor.run {
+                self.syncWithDisk()
+            }
+        }
     }
 
     // MARK: - Deletion & Cleanup
@@ -367,6 +391,18 @@ final class DownloadManager {
         }
     }
 
+    /// Grabs a representative frame from a video asset to use as artwork when no
+    /// embedded artwork metadata is present. Returns nil harmlessly for audio-only
+    /// assets (no video track to sample).
+    private nonisolated static func extractVideoFrame(from asset: AVURLAsset, durationSeconds: Double) -> Data? {
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.appliesPreferredTrackTransform = true
+        let sampleSeconds = durationSeconds.isFinite && durationSeconds > 0 ? min(1, durationSeconds / 2) : 0
+        let time = CMTime(seconds: sampleSeconds, preferredTimescale: 600)
+        guard let cgImage = try? generator.copyCGImage(at: time, actualTime: nil) else { return nil }
+        return UIImage(cgImage: cgImage).jpegData(compressionQuality: 0.85)
+    }
+
     /// Reconciles files on disk with the download registry:
     /// 1. Removes missing files deleted from the Files app.
     /// 2. Discovers new audio files added directly via the Files app, extracting title, artist, and embedded artwork.
@@ -386,8 +422,12 @@ final class DownloadManager {
                 changed = true
             }
 
-            // 2. Discover newly added files in Files app
-            let allowedExtensions: Set<String> = ["m4a", "mp3", "aac", "wav", "flac", "m4b", "aiff"]
+            // 2. Discover newly added files in Files app (audio and video — video
+            // files are played back for their audio track, same as a song).
+            let allowedExtensions: Set<String> = [
+                "m4a", "mp3", "aac", "wav", "flac", "m4b", "aiff",
+                "mp4", "mov", "m4v"
+            ]
 
             // If user dropped files directly into the root TuneTube/OfflineMusic directory, move to audio/
             if let rootFiles = try? fm.contentsOfDirectory(at: Self.rootDirectory, includingPropertiesForKeys: nil) {
@@ -427,6 +467,14 @@ final class DownloadManager {
                         if let artworkData {
                             let artDest = Self.artworkDirectory.appendingPathComponent("\(id).jpg")
                             try? artworkData.write(to: artDest, options: .atomic)
+                            artworkName = "\(id).jpg"
+                        } else if let frameData = Self.extractVideoFrame(from: asset, durationSeconds: rawDuration) {
+                            // No embedded artwork (typical for imported video files):
+                            // grab a representative frame instead of leaving it blank,
+                            // which would otherwise fall back to a guessed (and 404ing)
+                            // remote YouTube thumbnail URL.
+                            let artDest = Self.artworkDirectory.appendingPathComponent("\(id).jpg")
+                            try? frameData.write(to: artDest, options: .atomic)
                             artworkName = "\(id).jpg"
                         }
 

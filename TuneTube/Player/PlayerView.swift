@@ -625,13 +625,23 @@ struct PlayerView: View {
                 title: "\(max(1, Int(progress * 100)))%",
                 iconColor: Color(hex: "#007AFF")
             )
-        case .notDownloaded, .failed:
+        case .notDownloaded:
             Button {
                 downloadManager.startDownload(item: item)
             } label: {
                 ChipLabel(
                     systemName: "arrow.down.circle",
                     title: "Download"
+                )
+            }
+        case .failed:
+            Button {
+                downloadManager.startDownload(item: item)
+            } label: {
+                ChipLabel(
+                    systemName: "exclamationmark.arrow.circlepath",
+                    title: "Failed · Retry",
+                    iconColor: Color(hex: "#FF3B30")
                 )
             }
         }

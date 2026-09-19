@@ -175,6 +175,18 @@ final class PlayerEngine {
     /// Cached so we don't refetch lock-screen artwork on every Now Playing update.
     private var artworkCache: (id: String, artwork: MPMediaItemArtwork)?
 
+    /// Lets the UI (which owns the Song/Video toggle) know playback fell back
+    /// from the embedded YouTube iframe to native audio, so it can flip the
+    /// toggle back to Song. Wired once from `RootView` — `PlayerEngine` doesn't
+    /// otherwise know about `Navigator`.
+    var onFallbackToSongMode: (() -> Void)?
+
+    /// Set when Song-mode playback gave up entirely (native resolution failed
+    /// *and* the iframe fallback never actually started either — e.g. YouTube
+    /// extraction trouble on some long videos). The next `resume()` retries
+    /// the whole load from scratch instead of just re-poking the dead iframe.
+    private var needsFreshLoadOnResume = false
+
     private init() {
         player = YouTubePlayer(
             source: nil,
@@ -407,6 +419,9 @@ final class PlayerEngine {
             } else {
                 loadCurrent()
             }
+        } else if needsFreshLoadOnResume {
+            needsFreshLoadOnResume = false
+            loadCurrent()
         } else {
             isPlaying = true
             Task { try? await player.play() }
@@ -492,6 +507,7 @@ final class PlayerEngine {
         isLoading = true
         hasEnded = false
         intendedPlaying = true
+        needsFreshLoadOnResume = false
         pendingVideoSyncTime = nil
         isSeeking = false
 
@@ -555,9 +571,15 @@ final class PlayerEngine {
                     self.avPlayer.replaceCurrentItem(with: playerItem)
                     self.configureAudioSession()
                     self.avPlayer.play()
-                    self.isPlaying = true
-                    self.isLoading = false
+                    // Don't claim "playing" yet: a resolved stream URL can still
+                    // be dead/invalid (expired signature, wrong format for this
+                    // video) and never actually produce audio. Let the
+                    // avPlayer.rate/timeControlStatus observers in
+                    // setupAVPlayerObservers() flip isPlaying/isLoading once
+                    // playback is *actually* confirmed, and watch for the case
+                    // where it never does.
                     self.updateNowPlaying()
+                    self.watchForStuckNativePlayback(itemID: item.id, startTime: self.currentTime)
 
                     // If playing remote stream, download full track in background and seamlessly swap to local disk
                     if !isLocal {
@@ -588,10 +610,23 @@ final class PlayerEngine {
                     self.isNativeAVPlayer = false
                     self.avPlayer.pause()
                     self.avPlayer.replaceCurrentItem(with: nil)
-                    try? await self.player.load(source: .video(id: item.id))
-                    self.isPlaying = true
-                    self.isLoading = false
-                    self.updateNowPlaying()
+                    do {
+                        try await self.player.load(source: .video(id: item.id))
+                        guard !Task.isCancelled, self.current?.id == item.id else { return }
+                        // Don't claim "playing" yet: `load()` resolving only means the
+                        // JS command was issued, not that audio has actually started —
+                        // this video can take 15-20s to actually start producing sound.
+                        // Leave isLoading true (spinner) until the real .playing state
+                        // arrives via observePlaybackState(), or the watchdog gives up.
+                        self.updateNowPlaying()
+                        self.watchForStuckIframeFallback(itemID: item.id, startTime: self.currentTime)
+                    } catch {
+                        engineLogger.error("[PlayerEngine] Iframe fallback also failed for \(item.id): \(error)")
+                        self.isPlaying = false
+                        self.isLoading = false
+                        self.intendedPlaying = false
+                        self.needsFreshLoadOnResume = true
+                    }
                 }
             } else {
                 // VIDEO MODE: Official video rendered via YouTube web player in foreground
@@ -602,12 +637,16 @@ final class PlayerEngine {
                 do {
                     try await self.player.load(source: .video(id: item.id))
                     guard !Task.isCancelled, self.current?.id == item.id else { return }
-                    self.isPlaying = true
-                    self.isLoading = false
+                    // As above: `load()` resolving doesn't mean audio has started.
+                    // Keep isLoading true (spinner, honest UI) until the real
+                    // .playing state lands via observePlaybackState().
                     self.updateNowPlaying()
                     self.injectBackgroundAudioFix()
+                    self.watchForStuckVideoPlayback(itemID: item.id, startTime: self.currentTime)
                 } catch {
                     print("[PlayerEngine] Video iframe load error: \(error)")
+                    guard !Task.isCancelled, self.current?.id == item.id else { return }
+                    await self.fallBackToNativeAudioPlayback(for: item)
                 }
 
                 // Pre-resolve and download audio file in background so AVPlayer is instantly ready when backgrounding
@@ -621,6 +660,156 @@ final class PlayerEngine {
                 }
             }
         }
+    }
+
+    /// `resolveStreamURL` can return a URL that resolves without throwing but
+    /// still never actually plays (expired signature, a format AVPlayer
+    /// silently can't decode, etc.) — confirmed via a screen recording where a
+    /// long track showed a Pause icon with the scrubber frozen at 0:00 and
+    /// completely silent audio for 25+ seconds straight. If native playback
+    /// hasn't actually advanced shortly after starting, fall back to the
+    /// iframe rather than leaving it stuck forever.
+    private func watchForStuckNativePlayback(itemID: String, startTime: Double) {
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(8))
+            guard let self, !Task.isCancelled else { return }
+            guard self.current?.id == itemID, self.isNativeAVPlayer, self.intendedPlaying,
+                  abs(self.currentTime - startTime) < 0.5 else { return }
+            engineLogger.error("[PlayerEngine] Native playback stuck at \(self.currentTime)s for \(itemID) (resolved URL never actually played); falling back to iframe")
+            self.avPlayer.pause()
+            self.avPlayer.replaceCurrentItem(with: nil)
+            self.isNativeAVPlayer = false
+            do {
+                try await self.player.load(source: .video(id: itemID))
+                guard self.current?.id == itemID else { return }
+                self.updateNowPlaying()
+                self.watchForStuckIframeFallback(itemID: itemID, startTime: self.currentTime)
+            } catch {
+                engineLogger.error("[PlayerEngine] Iframe fallback after stuck native playback also failed for \(itemID): \(error)")
+                self.isPlaying = false
+                self.isLoading = false
+                self.intendedPlaying = false
+                self.needsFreshLoadOnResume = true
+            }
+        }
+    }
+
+    /// Some videos take a long time to actually start inside the embedded
+    /// YouTube iframe (observed 15-20s for some content) with no progress
+    /// callback in the meantime, so the UI is left claiming "playing" while
+    /// nothing advances. Earlier this watchdog paused the iframe and switched
+    /// over as soon as it fired — which, for a video that just needed more
+    /// time, killed a load that would otherwise have succeeded. Now it only
+    /// touches the iframe once a native audio URL is confirmed ready, and
+    /// otherwise keeps waiting (up to `maxAttempts`) rather than sabotaging a
+    /// slow-but-working load.
+    private func watchForStuckVideoPlayback(itemID: String, startTime: Double, attempt: Int = 1, maxAttempts: Int = 3) {
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(15))
+            guard let self, !Task.isCancelled else { return }
+            guard self.current?.id == itemID, self.displayMode == .video, !self.isNativeAVPlayer,
+                  self.intendedPlaying, abs(self.currentTime - startTime) < 0.5 else { return }
+
+            if let offline = DownloadManager.shared.localAudioURL(for: itemID) {
+                await self.switchStuckVideoToNativeAudio(itemID: itemID, audioURL: offline)
+            } else if let resolved = try? await StreamResolver.shared.resolveStreamURL(for: itemID) {
+                guard self.current?.id == itemID, self.displayMode == .video, !self.isNativeAVPlayer else { return }
+                self.currentResolvedStreamURL = resolved
+                self.currentResolvedItemID = itemID
+                await self.switchStuckVideoToNativeAudio(itemID: itemID, audioURL: resolved)
+            } else if attempt < maxAttempts {
+                // No native audio available yet either — give the still-loading
+                // iframe more time rather than leaving playback with no path
+                // forward at all.
+                self.watchForStuckVideoPlayback(itemID: itemID, startTime: startTime, attempt: attempt + 1, maxAttempts: maxAttempts)
+            } else {
+                engineLogger.error("[PlayerEngine] Video \(itemID) never started and no audio fallback is available; giving up")
+            }
+        }
+    }
+
+    /// Swaps a confirmed-stuck Video-mode iframe over to native AVPlayer audio
+    /// using an already-resolved URL — only called once we know audio is
+    /// actually ready to play, so there's no gap where neither path is active.
+    private func switchStuckVideoToNativeAudio(itemID: String, audioURL: URL) async {
+        guard current?.id == itemID, displayMode == .video, !isNativeAVPlayer else { return }
+        let targetTime = currentTime
+        engineLogger.notice("[PlayerEngine] Video \(itemID) stuck at \(targetTime)s; switching to native audio")
+        try? await player.pause()
+        isNativeAVPlayer = true
+        displayMode = .song
+        onFallbackToSongMode?()
+
+        let playerItem = AVPlayerItem(url: audioURL)
+        playerItem.preferredForwardBufferDuration = 0
+        avPlayer.automaticallyWaitsToMinimizeStalling = true
+        avPlayer.replaceCurrentItem(with: playerItem)
+        if targetTime > 0.1 {
+            await avPlayer.seek(to: CMTime(seconds: targetTime, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+        }
+        configureAudioSession()
+        avPlayer.play()
+        isPlaying = true
+        isLoading = false
+        updateNowPlaying()
+    }
+
+    /// Song mode's last-resort iframe fallback (used when native stream
+    /// resolution itself already failed) has no further fallback to try. If it
+    /// never actually starts either, stop claiming to be playing — so the UI
+    /// shows a play button instead of a permanently stuck "playing" state —
+    /// and mark the track for a fresh full retry the next time the user taps
+    /// play. Uses a longer grace window since this is the same iframe
+    /// mechanism observed taking 15-20s to start for some content.
+    private func watchForStuckIframeFallback(itemID: String, startTime: Double) {
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(25))
+            guard let self, !Task.isCancelled else { return }
+            guard self.current?.id == itemID, !self.isNativeAVPlayer,
+                  self.intendedPlaying, abs(self.currentTime - startTime) < 0.5 else { return }
+            engineLogger.error("[PlayerEngine] Iframe fallback stuck at \(self.currentTime)s for \(itemID); giving up")
+            self.isPlaying = false
+            self.isLoading = false
+            self.intendedPlaying = false
+            self.needsFreshLoadOnResume = true
+        }
+    }
+
+    /// Switches a dead/stuck Video-mode iframe over to native AVPlayer audio,
+    /// reusing the same instant stream-resolution path as normal Song playback.
+    private func fallBackToNativeAudioPlayback(for item: MediaItem) async {
+        guard current?.id == item.id else { return }
+        let targetTime = currentTime
+        try? await player.pause()
+        isNativeAVPlayer = true
+        displayMode = .song
+        onFallbackToSongMode?()
+
+        let audioURL: URL
+        if let offline = DownloadManager.shared.localAudioURL(for: item.id) {
+            audioURL = offline
+        } else if let resolved = try? await StreamResolver.shared.resolveStreamURL(for: item.id) {
+            currentResolvedStreamURL = resolved
+            currentResolvedItemID = item.id
+            audioURL = resolved
+        } else {
+            isLoading = false
+            return
+        }
+
+        guard current?.id == item.id else { return }
+        let playerItem = AVPlayerItem(url: audioURL)
+        playerItem.preferredForwardBufferDuration = 0
+        avPlayer.automaticallyWaitsToMinimizeStalling = true
+        avPlayer.replaceCurrentItem(with: playerItem)
+        if targetTime > 0.1 {
+            await avPlayer.seek(to: CMTime(seconds: targetTime, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+        }
+        configureAudioSession()
+        avPlayer.play()
+        isPlaying = true
+        isLoading = false
+        updateNowPlaying()
     }
 
     func setDisplayMode(_ mode: PlayerDisplayMode) {
@@ -644,9 +833,14 @@ final class PlayerEngine {
                 self.isNativeAVPlayer = true
 
                 let audioURL: URL
-                if let cached = self.currentResolvedStreamURL, self.currentResolvedItemID == item.id {
+                if let offline = DownloadManager.shared.localAudioURL(for: item.id) {
+                    audioURL = offline
+                } else if let cached = self.currentResolvedStreamURL, self.currentResolvedItemID == item.id {
                     audioURL = cached
-                } else if let resolved = try? await StreamResolver.shared.resolveAudioFileURL(for: item.id) {
+                } else if let resolved = try? await StreamResolver.shared.resolveStreamURL(for: item.id) {
+                    // Resolve the remote CDN URL directly (instant) rather than
+                    // waiting for a full download — for long tracks that full
+                    // download can take minutes, leaving playback stuck at 0:00.
                     self.currentResolvedStreamURL = resolved
                     self.currentResolvedItemID = item.id
                     audioURL = resolved
@@ -994,7 +1188,7 @@ final class PlayerEngine {
                             self.currentResolvedStreamURL = offline
                             self.currentResolvedItemID = item.id
                             audioURL = offline
-                        } else if let resolved = try? await StreamResolver.shared.resolveAudioFileURL(for: item.id) {
+                        } else if let resolved = try? await StreamResolver.shared.resolveStreamURL(for: item.id) {
                             self.currentResolvedStreamURL = resolved
                             self.currentResolvedItemID = item.id
                             audioURL = resolved

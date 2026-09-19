@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct DownloadsView: View {
     @Environment(\.dismiss) private var dismiss
@@ -8,6 +9,7 @@ struct DownloadsView: View {
     @State private var downloadManager = DownloadManager.shared
     @State private var searchQuery = ""
     @State private var showDeleteAllAlert = false
+    @State private var showImporter = false
     @State private var trackToRemove: DownloadedTrack?
     @State private var itemToAddToPlaylist: MediaItem?
 
@@ -48,20 +50,36 @@ struct DownloadsView: View {
         .navigationTitle("Downloaded")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            if !downloadManager.downloadedTracks.isEmpty {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Menu {
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    Button {
+                        showImporter = true
+                    } label: {
+                        Label("Import Songs & Videos", systemImage: "square.and.arrow.down.on.square")
+                    }
+
+                    if !downloadManager.downloadedTracks.isEmpty {
+                        Divider()
                         Button(role: .destructive) {
                             showDeleteAllAlert = true
                         } label: {
                             Label("Remove All Downloads", systemImage: "trash")
                         }
-                    } label: {
-                        Image(systemName: "ellipsis.circle")
-                            .font(.system(size: 16))
-                            .foregroundStyle(Theme.textPrimary)
                     }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .font(.system(size: 16))
+                        .foregroundStyle(Theme.textPrimary)
                 }
+            }
+        }
+        .fileImporter(
+            isPresented: $showImporter,
+            allowedContentTypes: [.audio, .movie],
+            allowsMultipleSelection: true
+        ) { result in
+            if case .success(let urls) = result {
+                downloadManager.importMediaFiles(from: urls)
             }
         }
         .confirmationDialog(

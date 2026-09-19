@@ -224,35 +224,54 @@ struct TrackRow: View {
     var subtitlePreference: MediaItem.SubtitlePreference = .automatic
     var trailingIcon: String?
     var onTap: () -> Void
+    /// When set, tapping `trailingIcon` opens this menu instead of playing the
+    /// row (the row body still plays on tap).
+    var trailingMenu: (() -> AnyView)? = nil
 
     var body: some View {
-        Button(action: onTap) {
-            HStack(spacing: 12) {
-                Artwork(url: item.thumbnailUrl, size: 46,
-                        corner: item.kind == .artist ? 23 : 6)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(item.title)
-                        .font(.system(size: 15, weight: .medium))
-                        .foregroundStyle(Theme.textPrimary)
-                        .lineLimit(1)
-                    if let sub = item.displaySubtitle(preferring: subtitlePreference) {
-                        Text(sub)
-                            .font(.system(size: 13))
-                            .foregroundStyle(Theme.textSecondary)
+        HStack(spacing: 4) {
+            Button(action: onTap) {
+                HStack(spacing: 12) {
+                    Artwork(url: item.thumbnailUrl, size: 46,
+                            corner: item.kind == .artist ? 23 : 6)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(item.title)
+                            .font(.system(size: 15, weight: .medium))
+                            .foregroundStyle(Theme.textPrimary)
                             .lineLimit(1)
+                        if let sub = item.displaySubtitle(preferring: subtitlePreference) {
+                            Text(sub)
+                                .font(.system(size: 13))
+                                .foregroundStyle(Theme.textSecondary)
+                                .lineLimit(1)
+                        }
                     }
+                    Spacer(minLength: 0)
                 }
-                Spacer()
-                if let trailingIcon {
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if let trailingIcon {
+                if let trailingMenu {
+                    Menu {
+                        trailingMenu()
+                    } label: {
+                        Image(systemName: trailingIcon)
+                            .font(.system(size: 18))
+                            .foregroundStyle(Theme.textSecondary)
+                            .padding(.vertical, 10)
+                            .padding(.leading, 6)
+                            .contentShape(Rectangle())
+                    }
+                } else {
                     Image(systemName: trailingIcon)
                         .font(.system(size: 18))
                         .foregroundStyle(Theme.textSecondary)
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 6)
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 6)
     }
 }

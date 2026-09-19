@@ -51,10 +51,22 @@ struct MediaItem: Identifiable, Codable, Hashable, Sendable {
             }
             return thumbnailUrl
         }
-        if !id.isEmpty && (kind == .song || kind == .video) {
+        // Only guess a YouTube thumbnail URL for ids that actually look like YouTube
+        // video ids (always exactly 11 base64url characters). Locally imported
+        // tracks get synthetic ids (e.g. "imported_12345" or a bare filename) that
+        // are never real video ids, so guessing here would just 404 forever.
+        if (kind == .song || kind == .video), Self.isYouTubeVideoID(id) {
             return URL(string: "https://i.ytimg.com/vi/\(id)/hqdefault.jpg")
         }
         return nil
+    }
+
+    private static let youtubeIDPattern = try? NSRegularExpression(pattern: "^[A-Za-z0-9_-]{11}$")
+
+    private static func isYouTubeVideoID(_ id: String) -> Bool {
+        guard let pattern = youtubeIDPattern else { return false }
+        let range = NSRange(id.startIndex..<id.endIndex, in: id)
+        return pattern.firstMatch(in: id, range: range) != nil
     }
 
     /// The plain `hqdefault.jpg` fallback is 4:3 with black bars above and below

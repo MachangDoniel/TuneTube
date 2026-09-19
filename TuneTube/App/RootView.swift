@@ -33,6 +33,7 @@ struct RootView: View {
                 .ignoresSafeArea()
         }
         .task {
+            player.onFallbackToSongMode = { navigator.playerDisplayMode = .song }
             await store.bootstrap()
             #if DEBUG
             if let autoPlayID = ProcessInfo.processInfo.environment["TUNETUBE_AUTOPLAY_ID"] {

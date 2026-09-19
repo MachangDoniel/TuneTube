@@ -113,7 +113,9 @@ actor StreamResolver {
 
         do {
             var request = URLRequest(url: streamURL)
-            request.timeoutInterval = 60
+            // Matches DownloadManager's timeout: long tracks can take well over a
+            // minute to fully download once YouTube's unthrottled burst window ends.
+            request.timeoutInterval = 600
             let (tempURL, response) = try await URLSession.shared.download(for: request)
 
             if let httpResponse = response as? HTTPURLResponse,

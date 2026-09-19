@@ -38,6 +38,12 @@ actor ImageLoader {
 
     private var inFlight: [URL: Task<UIImage?, Never>] = [:]
 
+    /// URLs that failed to load this session (e.g. a 404 for a locally imported
+    /// track with no real remote thumbnail). Without this, every reappearance of
+    /// the view (list scrolling, row recycling) fires a brand new network request
+    /// for a URL that will never succeed.
+    private var failed: Set<URL> = []
+
     private nonisolated let directory: URL = {
         let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
         let dir = base.appendingPathComponent("TuneTubeArtwork", isDirectory: true)
@@ -53,12 +59,14 @@ actor ImageLoader {
 
     func image(for url: URL) async -> UIImage? {
         if let hit = cached(url) { return hit }
+        if failed.contains(url) { return nil }
 
         if url.isFileURL {
             if let data = try? Data(contentsOf: url), let image = UIImage(data: data) {
                 memory.store(image, for: url)
                 return image
             }
+            failed.insert(url)
             return nil
         }
 
@@ -88,7 +96,11 @@ actor ImageLoader {
         let image = await task.value
         inFlight[url] = nil
 
-        if let image { memory.store(image, for: url) }
+        if let image {
+            memory.store(image, for: url)
+        } else {
+            failed.insert(url)
+        }
         return image
     }
 

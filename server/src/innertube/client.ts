@@ -122,8 +122,26 @@ export class InnerTube {
     return res.json();
   }
 
+  /** The region this client is scoped to, for endpoints that select it explicitly. */
+  get regionCode(): string {
+    return this.region;
+  }
+
   browse(browseId: string, params?: string) {
     return this.post('browse', params ? { browseId, params } : { browseId });
+  }
+
+  /**
+   * Browse a page whose region/filter is chosen by its own form control rather
+   * than by `gl`. The charts page is the one that matters: for signed-out
+   * requests YouTube geolocates by IP and ignores the `gl` in the context, so
+   * `formData.selectedValues` is the only thing that actually switches country.
+   *
+   * An unsupported code (Bangladesh is not among the ~69 offered) is not an
+   * error — YouTube just returns the Global charts.
+   */
+  browseWithForm(browseId: string, selectedValues: string[]) {
+    return this.post('browse', { browseId, formData: { selectedValues } });
   }
 
   /** Continuation tokens go in the BODY. The ?continuation= query param is dead. */

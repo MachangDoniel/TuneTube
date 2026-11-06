@@ -53,10 +53,20 @@ function capped(shelf: Shelf): Shelf {
 const shelvesFrom = (nodes: any[]): Shelf[] =>
   nodes.map(parseAnyShelf).filter(Boolean) as Shelf[];
 
-/** Top artists + Video charts for the region. */
+/** This is a music app; a whole shelf of podcast shows is noise. */
+const PODCAST_SHELF = /podcast/i;
+
+/**
+ * Top artists + Video charts for the region.
+ *
+ * The country comes from the page's own form control, not from `gl` — see
+ * `browseWithForm`. A region YouTube does not chart (Bangladesh among them)
+ * quietly yields the Global charts.
+ */
 async function chartShelves(yt: InnerTube): Promise<Shelf[]> {
   try {
-    return shelvesFrom(sectionContents(await yt.browse('FEmusic_charts')));
+    const json = await yt.browseWithForm('FEmusic_charts', [yt.regionCode]);
+    return shelvesFrom(sectionContents(json)).filter((s) => !PODCAST_SHELF.test(s.title));
   } catch {
     return [];
   }

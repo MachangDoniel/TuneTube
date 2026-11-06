@@ -39,9 +39,21 @@ export async function getArtist(yt: InnerTube, browseId: string) {
   };
 }
 
+/**
+ * Playlists are browsed as `VL<playlistId>`; albums are browsed by their own
+ * `MPRE...` id. Prefixing an album id yields `VLMPRE...`, which YouTube answers
+ * with a page that has no track shelf — so the screen opened empty. Home never
+ * hit this because its album cards carry an OLAK5uy_ playlist id; search result
+ * rows carry the raw browseId.
+ */
+export function playlistBrowseId(id: string): string {
+  if (id.startsWith('VL') || id.startsWith('MPRE')) return id;
+  return `VL${id}`;
+}
+
 /** Playlist or album detail with its full track list. */
 export async function getPlaylist(yt: InnerTube, playlistId: string) {
-  const browseId = playlistId.startsWith('VL') ? playlistId : `VL${playlistId}`;
+  const browseId = playlistBrowseId(playlistId);
   const json = await yt.browse(browseId);
 
   const header =

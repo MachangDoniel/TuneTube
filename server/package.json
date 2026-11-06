@@ -7,9 +7,13 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "predeploy": "node scripts/check-account.mjs",
+    "check:account": "node scripts/check-account.mjs"
   },
-  "dependencies": { "hono": "^4.6.14" },
+  "dependencies": {
+    "hono": "^4.6.14"
+  },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20241218.0",
     "typescript": "^5.7.2",

@@ -2,6 +2,13 @@ name = "tunetube-api"
 main = "src/index.ts"
 compatibility_date = "2024-12-01"
 
+# Pinned deliberately. Deploying to any other account does not fail: it creates
+# a second tunetube-api on a different workers.dev subdomain and reports
+# success, while the app keeps reading tunetube-app.workers.dev. This account
+# owns that subdomain and the CACHE namespace below.
+# Enforced before every deploy by scripts/check-account.mjs.
+account_id = "2a85d03c39c7b74f9f162e8609b56ed4"
+
 [vars]
 YTM_REGION = "US"
 YTM_LANG   = "en"

@@ -9,6 +9,7 @@ import {
   chartCountries, sectionContents, slug, unwrapItemSections,
 } from '../src/innertube/parsers';
 import { nearestChartCountry, serviceableRegion } from '../src/config';
+import { playlistBrowseId } from '../src/routes/browse';
 import type { MediaItem, Shelf } from '../src/types';
 
 import category from './fixtures/category-feelgood.json';
@@ -258,5 +259,24 @@ describe('serviceableRegion', () => {
     expect(serviceableRegion('US')).toBe('US');
     expect(serviceableRegion('ZZ')).toBe('US');
     expect(serviceableRegion('QQ')).toBe('US');
+  });
+});
+
+describe('playlistBrowseId', () => {
+  it('prefixes bare playlist ids with VL', () => {
+    expect(playlistBrowseId('PL4fGSI1pDJn5oibdgJt8Hy0')).toBe('VLPL4fGSI1pDJn5oibdgJt8Hy0');
+    expect(playlistBrowseId('RDCLAK5uy_krbBs7P2iEb30')).toBe('VLRDCLAK5uy_krbBs7P2iEb30');
+    expect(playlistBrowseId('OLAK5uy_mNwczAjVZuG1bwfR')).toBe('VLOLAK5uy_mNwczAjVZuG1bwfR');
+  });
+
+  it('leaves album browse ids alone', () => {
+    // Regression: VLMPREb_... returns a page with no track shelf, so every
+    // album opened from search results came up empty.
+    expect(playlistBrowseId('MPREb_oBucXyijinj')).toBe('MPREb_oBucXyijinj');
+    expect(playlistBrowseId('MPREb_HtIOxExZ0ci')).toBe('MPREb_HtIOxExZ0ci');
+  });
+
+  it('does not double-prefix an id that already has VL', () => {
+    expect(playlistBrowseId('VLPL4fGSI1pDJn5')).toBe('VLPL4fGSI1pDJn5');
   });
 });

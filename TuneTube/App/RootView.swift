@@ -7,6 +7,7 @@ struct RootView: View {
     private let store = StoreManager.shared
     private let auth = AuthService.shared
     private let downloadManager = DownloadManager.shared
+    private let settings = AppSettings.shared
 
     var body: some View {
         @Bindable var nav = navigator
@@ -19,6 +20,7 @@ struct RootView: View {
                 .environment(store)
                 .environment(auth)
                 .environment(downloadManager)
+                .environment(settings)
 
             PlayerView()
                 .environment(navigator)
@@ -26,6 +28,7 @@ struct RootView: View {
                 .environment(store)
                 .environment(auth)
                 .environment(downloadManager)
+                .environment(settings)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .offset(y: nav.showPlayer ? 0 : UIScreen.main.bounds.height + 200)
                 .allowsHitTesting(nav.showPlayer)
@@ -142,6 +145,10 @@ struct RootView: View {
                         LocalPlaylistView(playlistId: id)
                     case .downloads:
                         DownloadsView()
+                    case .regionPicker:
+                        RegionPickerView()
+                    case .languagePicker:
+                        LanguagePickerView()
                     }
                 }
         }

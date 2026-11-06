@@ -58,6 +58,19 @@ final class SearchViewModel {
         isSearching = false
     }
 
+    /// Region or language changed. Every memoised result was for the old
+    /// `gl`/`hl`, so drop them and re-run whatever is in the field.
+    func localeDidChange() {
+        searchTask?.cancel()
+        searchMemoryCache.removeAll()
+        shelves = []
+        isSearching = false
+
+        let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard text.count >= 2 else { return }
+        searchTask = Task { await run(text) }
+    }
+
     private func run(_ text: String) async {
         let key = text.lowercased()
         isSearching = true

@@ -292,4 +292,10 @@ actor APIClient {
     func config(forceRefresh: Bool = false) async throws -> RemoteConfig {
         try await get(RemoteConfig.self, path: "v1/config", cacheKey: "config", ttl: TTL.config, forceRefresh: forceRefresh)
     }
+
+    /// Drops every cached response. Called when the content region or language
+    /// changes, since each cached body was fetched for the previous `gl`/`hl`.
+    func clearCaches() async {
+        await cache.clearAll()
+    }
 }

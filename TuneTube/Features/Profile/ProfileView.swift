@@ -5,6 +5,7 @@ struct ProfileView: View {
     @Environment(AuthService.self) private var auth
     @Environment(StoreManager.self) private var store
     @Environment(Navigator.self) private var navigator
+    @Environment(AppSettings.self) private var settings
 
     @State private var showDeleteConfirm = false
     @State private var restoreMessage: String?
@@ -27,6 +28,8 @@ struct ProfileView: View {
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, 24)
                 }
+
+                contentRows
 
                 settingsRows
 
@@ -140,6 +143,33 @@ struct ProfileView: View {
 
     // MARK: - Rows
 
+    /// Region and language drive `gl`/`hl` on every API call, so changing one
+    /// re-sources the whole home feed.
+    private var contentRows: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("CONTENT")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Theme.textSecondary)
+                .padding(.horizontal, 30)
+
+            VStack(spacing: 0) {
+                valueRow(
+                    "globe",
+                    "Region",
+                    "\(settings.selectedRegion.flag)  \(settings.selectedRegion.name)"
+                ) { navigator.push(.regionPicker) }
+                divider
+                valueRow(
+                    "character.bubble",
+                    "Language",
+                    settings.selectedLanguage.name
+                ) { navigator.push(.languagePicker) }
+            }
+            .background(Theme.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .padding(.horizontal, 16)
+        }
+    }
+
     private var settingsRows: some View {
         VStack(spacing: 0) {
             // Restore Purchases commented out - everything is free
@@ -169,6 +199,36 @@ struct ProfileView: View {
 
     private var divider: some View {
         Divider().overlay(Color.white.opacity(0.06)).padding(.leading, 50)
+    }
+
+    /// Like `row`, but with the current value on the right instead of a
+    /// subtitle underneath.
+    private func valueRow(
+        _ icon: String, _ title: String, _ value: String, action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Image(systemName: icon)
+                    .font(.system(size: 16))
+                    .foregroundStyle(Theme.textSecondary)
+                    .frame(width: 24)
+                Text(title)
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(Theme.textPrimary)
+                Spacer(minLength: 12)
+                Text(value)
+                    .font(.system(size: 14))
+                    .foregroundStyle(Theme.textSecondary)
+                    .lineLimit(1)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.textSecondary.opacity(0.6))
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     private func row(

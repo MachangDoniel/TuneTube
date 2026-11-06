@@ -189,3 +189,26 @@ export function nearestChartCountry(
   }
   return undefined;
 }
+
+/**
+ * A region code YouTube will actually accept as `gl`.
+ *
+ * YouTube Music is not available everywhere. For Afghanistan, Albania, Cuba,
+ * Bhutan, Fiji and others, *every* InnerTube call returns HTTP 400 — not just
+ * charts, but search and category browses too, so the whole screen comes back
+ * empty. The picker offers those regions, so the request has to be made in
+ * terms of somewhere YouTube serves.
+ *
+ * Walks CHART_REGION_FALLBACK to a terminal entry (one that is not itself a
+ * key, i.e. a country YouTube charts and therefore serves), falling back to US.
+ */
+export function serviceableRegion(code: string): string {
+  const seen = new Set<string>([code]);
+  let next = CHART_REGION_FALLBACK[code];
+  while (next && !seen.has(next)) {
+    if (!(next in CHART_REGION_FALLBACK)) return next;
+    seen.add(next);
+    next = CHART_REGION_FALLBACK[next];
+  }
+  return next && !seen.has(next) ? next : 'US';
+}

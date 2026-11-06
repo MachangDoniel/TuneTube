@@ -45,10 +45,10 @@ targets:
           API_BASE_URL: https://tunetube-api.tunetube-app.workers.dev
       base:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        PRODUCT_BUNDLE_IDENTIFIER: com.tunetube.app
+        PRODUCT_BUNDLE_IDENTIFIER: com.tunetube.doniel.dev
         # Needed to build for a physical device. DKQJNLN997 is the
         # donieltripura@icloud.com team; automatic signing resolves the profile.
-        DEVELOPMENT_TEAM: DKQJNLN997
+        DEVELOPMENT_TEAM: W49J7LTUV4
         CODE_SIGN_STYLE: Automatic
         MARKETING_VERSION: "1.0.0"
         CURRENT_PROJECT_VERSION: "1"

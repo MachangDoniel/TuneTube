@@ -126,3 +126,66 @@ export const SEARCH_FILTERS: Record<string, string> = {
   artists:   'EgWKAQIgAWoKEAkQChAFEAMQBA%3D%3D',
   playlists: 'EgWKAQIoAWoKEAkQChAFEAMQBA%3D%3D',
 };
+
+/**
+ * Nearest charted neighbour for a country YouTube Music does not chart.
+ *
+ * YouTube charts ~69 countries. For everyone else the charts page silently
+ * returns the Global list, which for a Bangladeshi or Pakistani listener is a
+ * far worse answer than their regional neighbour's chart. Each entry points at
+ * the closest country by shared music market, not merely by distance.
+ *
+ * Values may themselves be unlisted, so lookups follow the chain (see
+ * `nearestChartCountry`). The real supported set is read from the live charts
+ * response, so an entry here is a preference, never an assumption.
+ */
+export const CHART_REGION_FALLBACK: Record<string, string> = {
+  // South Asia -> India
+  BD: 'IN', PK: 'IN', LK: 'IN', NP: 'IN', BT: 'IN', MV: 'IN', AF: 'IN',
+
+  // Sub-Saharan Africa
+  GH: 'NG', CI: 'NG', SN: 'NG', CM: 'NG', ML: 'NG', BF: 'NG',
+  ET: 'KE', RW: 'KE', SS: 'KE', SO: 'KE',
+  ZM: 'ZA', MZ: 'ZA', BW: 'ZA', NA: 'ZA', MW: 'ZA', LS: 'ZA', SZ: 'ZA',
+
+  // Middle East & North Africa
+  QA: 'AE', KW: 'AE', BH: 'AE', OM: 'AE', JO: 'AE', LB: 'AE', SY: 'AE',
+  IQ: 'SA', YE: 'SA', LY: 'EG', TN: 'EG', DZ: 'EG', MA: 'EG', SD: 'EG',
+
+  // South-East & East Asia
+  MM: 'TH', KH: 'TH', LA: 'TH', BN: 'MY', MO: 'HK', MN: 'KR',
+
+  // Europe
+  SK: 'CZ', BG: 'RO', MD: 'RO',
+  SI: 'RS', HR: 'RS', BA: 'RS', MK: 'RS', AL: 'RS', ME: 'RS', XK: 'RS',
+  GR: 'IT', CY: 'IT', MT: 'IT',
+  LT: 'PL', LV: 'EE',
+  BY: 'RU', KZ: 'RU', UZ: 'RU', KG: 'RU', TJ: 'RU', TM: 'RU', AM: 'RU',
+  GE: 'TR', AZ: 'TR',
+
+  // Americas & Caribbean
+  CU: 'MX', BZ: 'MX', HT: 'DO', JM: 'US', TT: 'US', BS: 'US', PR: 'US',
+  VE: 'CO', GY: 'BR', SR: 'BR',
+
+  // Oceania
+  FJ: 'AU', PG: 'AU', NC: 'AU', WS: 'NZ', TO: 'NZ',
+};
+
+/**
+ * Walk `CHART_REGION_FALLBACK` until it reaches a country the live charts page
+ * actually offers. Returns undefined when nothing suitable is reachable, in
+ * which case the caller keeps the Global charts it already has.
+ */
+export function nearestChartCountry(
+  code: string,
+  supported: Set<string>,
+): string | undefined {
+  const seen = new Set<string>([code]);
+  let next = CHART_REGION_FALLBACK[code];
+  while (next && !seen.has(next)) {
+    if (supported.has(next)) return next;
+    seen.add(next);
+    next = CHART_REGION_FALLBACK[next];
+  }
+  return undefined;
+}

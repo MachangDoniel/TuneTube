@@ -1,8 +1,8 @@
 import { InnerTube } from '../innertube/client';
-import { CATEGORIES, HOME_MANIFEST } from '../config';
+import { CATEGORIES, HOME_MANIFEST, nearestChartCountry } from '../config';
 import {
-  continuationItems, continuationToken, parseAnyShelf, sectionContents,
-  sectionListRenderer, slug,
+  chartCountries, continuationItems, continuationToken, parseAnyShelf,
+  sectionContents, sectionListRenderer, slug,
 } from '../innertube/parsers';
 import type { MediaItem, Shelf } from '../types';
 
@@ -65,7 +65,18 @@ const PODCAST_SHELF = /podcast/i;
  */
 async function chartShelves(yt: InnerTube): Promise<Shelf[]> {
   try {
-    const json = await yt.browseWithForm('FEmusic_charts', [yt.regionCode]);
+    const wanted = yt.regionCode;
+    let json = await yt.browseWithForm('FEmusic_charts', [wanted]);
+
+    // The response carries the country menu, so one request tells us both the
+    // charts and whether this region is charted at all.
+    const supported = chartCountries(json);
+    if (supported.size && !supported.has(wanted)) {
+      const neighbour = nearestChartCountry(wanted, supported);
+      // No neighbour reachable: keep the Global charts already in hand.
+      if (neighbour) json = await yt.browseWithForm('FEmusic_charts', [neighbour]);
+    }
+
     return shelvesFrom(sectionContents(json)).filter((s) => !PODCAST_SHELF.test(s.title));
   } catch {
     return [];

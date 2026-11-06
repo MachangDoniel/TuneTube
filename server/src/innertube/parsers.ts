@@ -424,6 +424,44 @@ export function continuationItems(json: any): { items: any[]; sectionList: any }
   return { items: [], sectionList: null };
 }
 
+/**
+ * The ISO codes the charts page offers in its country menu.
+ *
+ * Read from the charts response itself rather than hardcoded, so the set stays
+ * correct as YouTube adds or drops countries. The code lives inside each
+ * option's `formItemEntityKey`, which decodes to
+ * `explore_charts_country_menu_<menuId><CC>` — reading the code rather than the
+ * visible label keeps this working under any `hl`.
+ */
+export function chartCountries(json: any): Set<string> {
+  const found = new Set<string>();
+
+  const walk = (node: any) => {
+    if (!node || typeof node !== 'object') return;
+    const option = node.musicMultiSelectMenuItemRenderer;
+    const key = option?.formItemEntityKey;
+    if (typeof key === 'string') {
+      const code = decodeChartCountry(key);
+      if (code) found.add(code);
+    }
+    for (const value of Object.values(node)) {
+      if (value && typeof value === 'object') walk(value);
+    }
+  };
+  walk(json);
+
+  return found;
+}
+
+function decodeChartCountry(entityKey: string): string | undefined {
+  try {
+    const raw = atob(decodeURIComponent(entityKey).replace(/-/g, '+').replace(/_/g, '/'));
+    return raw.match(/explore_charts_country_menu_\d+([A-Z]{2})/)?.[1];
+  } catch {
+    return undefined;
+  }
+}
+
 export function slug(s: string): string {
   if (!s.trim()) return 'shelf';
   const ascii = s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');

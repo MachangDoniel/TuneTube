@@ -6,8 +6,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   lyricsBrowseId, parseAnyItem, parseAnyShelf, parseCardShelf, parseLyrics, parseWatchPlaylist,
-  sectionContents, slug, unwrapItemSections,
+  chartCountries, sectionContents, slug, unwrapItemSections,
 } from '../src/innertube/parsers';
+import { nearestChartCountry } from '../src/config';
 import type { MediaItem, Shelf } from '../src/types';
 
 import category from './fixtures/category-feelgood.json';
@@ -189,5 +190,49 @@ describe('slug', () => {
 
   it('still has a defined result for an empty title', () => {
     expect(slug('')).toBe('shelf');
+  });
+});
+
+/** Build a charts-menu option the way YouTube encodes it. */
+const countryOption = (code: string) => ({
+  musicMultiSelectMenuItemRenderer: {
+    formItemEntityKey: encodeURIComponent(
+      btoa(`\u0012'explore_charts_country_menu_316766567${code} \u0001(\u0001`),
+    ),
+  },
+});
+
+describe('chartCountries', () => {
+  it('reads the offered country codes out of the menu', () => {
+    const json = { a: { b: [countryOption('BR'), countryOption('IN')] }, c: countryOption('ZZ') };
+    expect(chartCountries(json)).toEqual(new Set(['BR', 'IN', 'ZZ']));
+  });
+
+  it('returns an empty set rather than throwing on junk', () => {
+    expect(chartCountries({ musicMultiSelectMenuItemRenderer: { formItemEntityKey: 'not base64!' } }).size).toBe(0);
+    expect(chartCountries(null).size).toBe(0);
+  });
+});
+
+describe('nearestChartCountry', () => {
+  const supported = new Set(['IN', 'NG', 'ZA', 'US', 'BR']);
+
+  it('sends uncharted South Asian regions to India', () => {
+    // The case that matters: Bangladesh is not charted, and Global is a far
+    // worse answer for those listeners than India.
+    expect(nearestChartCountry('BD', supported)).toBe('IN');
+    expect(nearestChartCountry('PK', supported)).toBe('IN');
+    expect(nearestChartCountry('LK', supported)).toBe('IN');
+  });
+
+  it('follows the chain when the first hop is itself uncharted', () => {
+    // CY -> IT, and with IT unavailable there is nowhere further to go.
+    expect(nearestChartCountry('CY', supported)).toBeUndefined();
+    expect(nearestChartCountry('GH', supported)).toBe('NG');
+  });
+
+  it('gives up rather than looping', () => {
+    expect(nearestChartCountry('ZZ', supported)).toBeUndefined();
+    expect(nearestChartCountry('XX', supported)).toBeUndefined();
   });
 });

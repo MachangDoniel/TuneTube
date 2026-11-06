@@ -6,9 +6,14 @@ import Observation
 /// its cache key.
 struct ContentRegion: Identifiable, Hashable, Sendable {
     let code: String
-    let name: String
 
     var id: String { code }
+
+    /// Taken from the device rather than hard-coded, so the picker reads in the
+    /// user's own language and there are no 150 English names to maintain.
+    var name: String {
+        Locale.current.localizedString(forRegionCode: code) ?? code
+    }
 
     /// Flag emoji built from the two regional-indicator symbols for the code.
     var flag: String {
@@ -33,69 +38,39 @@ struct ContentLanguage: Identifiable, Hashable, Sendable {
 }
 
 extension ContentRegion {
-    /// The regions YouTube Music serves a distinct home feed for. Ordered by
-    /// name so the picker reads alphabetically.
-    static let all: [ContentRegion] = [
-        .init(code: "AR", name: "Argentina"),
-        .init(code: "AU", name: "Australia"),
-        .init(code: "AT", name: "Austria"),
-        .init(code: "BD", name: "Bangladesh"),
-        .init(code: "BE", name: "Belgium"),
-        .init(code: "BR", name: "Brazil"),
-        .init(code: "CA", name: "Canada"),
-        .init(code: "CL", name: "Chile"),
-        .init(code: "CO", name: "Colombia"),
-        .init(code: "CZ", name: "Czechia"),
-        .init(code: "DK", name: "Denmark"),
-        .init(code: "EG", name: "Egypt"),
-        .init(code: "FI", name: "Finland"),
-        .init(code: "FR", name: "France"),
-        .init(code: "DE", name: "Germany"),
-        .init(code: "GH", name: "Ghana"),
-        .init(code: "HK", name: "Hong Kong"),
-        .init(code: "HU", name: "Hungary"),
-        .init(code: "IN", name: "India"),
-        .init(code: "ID", name: "Indonesia"),
-        .init(code: "IE", name: "Ireland"),
-        .init(code: "IL", name: "Israel"),
-        .init(code: "IT", name: "Italy"),
-        .init(code: "JP", name: "Japan"),
-        .init(code: "KE", name: "Kenya"),
-        .init(code: "MY", name: "Malaysia"),
-        .init(code: "MX", name: "Mexico"),
-        .init(code: "NL", name: "Netherlands"),
-        .init(code: "NZ", name: "New Zealand"),
-        .init(code: "NG", name: "Nigeria"),
-        .init(code: "NO", name: "Norway"),
-        .init(code: "PK", name: "Pakistan"),
-        .init(code: "PE", name: "Peru"),
-        .init(code: "PH", name: "Philippines"),
-        .init(code: "PL", name: "Poland"),
-        .init(code: "PT", name: "Portugal"),
-        .init(code: "RO", name: "Romania"),
-        .init(code: "RU", name: "Russia"),
-        .init(code: "SA", name: "Saudi Arabia"),
-        .init(code: "SG", name: "Singapore"),
-        .init(code: "ZA", name: "South Africa"),
-        .init(code: "KR", name: "South Korea"),
-        .init(code: "ES", name: "Spain"),
-        .init(code: "LK", name: "Sri Lanka"),
-        .init(code: "SE", name: "Sweden"),
-        .init(code: "CH", name: "Switzerland"),
-        .init(code: "TW", name: "Taiwan"),
-        .init(code: "TH", name: "Thailand"),
-        .init(code: "TR", name: "Türkiye"),
-        .init(code: "AE", name: "United Arab Emirates"),
-        .init(code: "GB", name: "United Kingdom"),
-        .init(code: "US", name: "United States"),
-        .init(code: "VN", name: "Vietnam"),
-    ]
+    /// Every region the API can serve real regional charts for: the countries
+    /// YouTube Music charts directly, plus those the Worker maps to a charted
+    /// neighbour (Bangladesh and Pakistan to India, Ghana to Nigeria, and so
+    /// on). A code outside this list would fall through to the global chart,
+    /// which is what the list exists to avoid.
+    ///
+    /// Sorted by localized name, so the order follows whatever language the
+    /// device is in.
+    static let all: [ContentRegion] = codes
+        .map(ContentRegion.init(code:))
+        .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
 
-    static let fallback = ContentRegion(code: "US", name: "United States")
+    static let fallback = ContentRegion(code: "US")
 
     static func named(_ code: String) -> ContentRegion {
         all.first { $0.code == code } ?? fallback
     }
+
+    private static let codes: [String] = [
+        "AE", "AF", "AL", "AM", "AR", "AT", "AU", "AZ", "BA", "BD", "BE", "BF",
+        "BG", "BH", "BN", "BO", "BR", "BS", "BT", "BW", "BY", "BZ", "CA", "CH",
+        "CI", "CL", "CM", "CO", "CR", "CU", "CY", "CZ", "DE", "DK", "DO", "DZ",
+        "EC", "EE", "EG", "ES", "ET", "FI", "FJ", "FR", "GB", "GE", "GH", "GR",
+        "GT", "GY", "HK", "HN", "HR", "HT", "HU", "ID", "IE", "IL", "IN", "IQ",
+        "IS", "IT", "JM", "JO", "JP", "KE", "KG", "KH", "KR", "KW", "KZ", "LA",
+        "LB", "LK", "LS", "LT", "LU", "LV", "LY", "MA", "MD", "ME", "MK", "ML",
+        "MM", "MN", "MO", "MT", "MV", "MW", "MX", "MY", "MZ", "NA", "NC", "NG",
+        "NI", "NL", "NO", "NP", "NZ", "OM", "PA", "PE", "PG", "PH", "PK", "PL",
+        "PR", "PT", "PY", "QA", "RO", "RS", "RU", "RW", "SA", "SD", "SE", "SG",
+        "SI", "SK", "SN", "SO", "SR", "SS", "SV", "SY", "SZ", "TH", "TJ", "TM",
+        "TN", "TO", "TR", "TT", "TW", "TZ", "UA", "UG", "US", "UY", "UZ", "VE",
+        "VN", "WS", "YE", "ZA", "ZM", "ZW",
+    ]
 }
 
 extension ContentLanguage {

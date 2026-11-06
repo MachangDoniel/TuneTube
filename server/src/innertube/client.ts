@@ -31,6 +31,8 @@ export interface Session {
 
 export class InnerTube {
   private session: Session | null = null;
+  /** In-flight bootstrap, shared by concurrent callers. See `getSession`. */
+  private pending: Promise<Session> | null = null;
 
   constructor(
     private kv: KVNamespace,
@@ -42,10 +44,24 @@ export class InnerTube {
     return `${SESSION_KEY_PREFIX}:${this.lang}-${this.region}`;
   }
 
-  /** Scrape clientVersion + visitorData from the YTM homepage, cached in KV. */
-  async getSession(): Promise<Session> {
-    if (this.session) return this.session;
+  /**
+   * Scrape clientVersion + visitorData from the YTM homepage, cached in KV.
+   *
+   * Building Home issues a dozen browses in parallel on one instance. Without
+   * sharing the in-flight bootstrap, every one of them would see no session and
+   * scrape the homepage at the same time; YouTube throttles the burst and the
+   * whole feed comes back empty on a cold region. Observed in production: the
+   * first request for a new hl-gl fell all the way through to the fallback.
+   */
+  getSession(): Promise<Session> {
+    if (this.session) return Promise.resolve(this.session);
+    this.pending ??= this.bootstrap().finally(() => {
+      this.pending = null;
+    });
+    return this.pending;
+  }
 
+  private async bootstrap(): Promise<Session> {
     const cached = await this.kv.get(this.sessionKey, 'json');
     if (cached) {
       this.session = cached as Session;
@@ -77,9 +93,13 @@ export class InnerTube {
     }
 
     this.session = session;
-    await this.kv.put(this.sessionKey, JSON.stringify(session), {
-      expirationTtl: SESSION_TTL,
-    });
+    // Only persist a usable session. Caching a failed scrape (no visitorData)
+    // would break continuations for the next six hours.
+    if (session.visitorData) {
+      await this.kv.put(this.sessionKey, JSON.stringify(session), {
+        expirationTtl: SESSION_TTL,
+      });
+    }
     return session;
   }
 

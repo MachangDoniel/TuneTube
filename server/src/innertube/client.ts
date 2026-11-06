@@ -34,10 +34,19 @@ export class InnerTube {
   /** In-flight bootstrap, shared by concurrent callers. See `getSession`. */
   private pending: Promise<Session> | null = null;
 
+  /** Set once we have fallen back, so we retry at most one time. */
+  private switched = false;
+
   constructor(
     private kv: KVNamespace,
     private lang = 'en',
     private region = 'US',
+    /**
+     * Where to retry when YouTube rejects `region` outright. Regions it does
+     * not serve (Afghanistan, Cuba, Albania...) fail every call with HTTP 400,
+     * so without this the whole screen comes back empty.
+     */
+    private readonly fallbackRegion: string = 'US',
   ) {}
 
   private get sessionKey(): string {
@@ -137,6 +146,15 @@ export class InnerTube {
     );
 
     if (!res.ok) {
+      // A 400 here means YouTube will not serve this region at all, for any
+      // endpoint. Switch to the nearest one it does serve and try once more.
+      if (res.status === 400 && !this.switched && this.fallbackRegion !== this.region) {
+        this.switched = true;
+        this.region = this.fallbackRegion;
+        this.session = null;
+        this.pending = null;
+        return this.post(endpoint, body);
+      }
       throw new Error(`InnerTube ${endpoint} failed: HTTP ${res.status}`);
     }
     return res.json();

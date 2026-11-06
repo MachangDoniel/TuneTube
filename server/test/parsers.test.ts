@@ -8,7 +8,7 @@ import {
   lyricsBrowseId, parseAnyItem, parseAnyShelf, parseCardShelf, parseLyrics, parseWatchPlaylist,
   chartCountries, sectionContents, slug, unwrapItemSections,
 } from '../src/innertube/parsers';
-import { nearestChartCountry } from '../src/config';
+import { nearestChartCountry, serviceableRegion } from '../src/config';
 import type { MediaItem, Shelf } from '../src/types';
 
 import category from './fixtures/category-feelgood.json';
@@ -234,5 +234,29 @@ describe('nearestChartCountry', () => {
   it('gives up rather than looping', () => {
     expect(nearestChartCountry('ZZ', supported)).toBeUndefined();
     expect(nearestChartCountry('XX', supported)).toBeUndefined();
+  });
+});
+
+describe('serviceableRegion', () => {
+  it('maps regions YouTube refuses onto ones it serves', () => {
+    // These return HTTP 400 for every endpoint, not just charts, so the whole
+    // screen came back empty until the request was made in these terms.
+    expect(serviceableRegion('AF')).toBe('IN');
+    expect(serviceableRegion('BT')).toBe('IN');
+    expect(serviceableRegion('CU')).toBe('MX');
+    expect(serviceableRegion('AL')).toBe('RS');
+    expect(serviceableRegion('FJ')).toBe('AU');
+    expect(serviceableRegion('MN')).toBe('KR');
+  });
+
+  it('resolves through a chain to a terminal country', () => {
+    // HT -> DO, and DO is charted, so it terminates there.
+    expect(serviceableRegion('HT')).toBe('DO');
+  });
+
+  it('falls back to US for anything unmapped', () => {
+    expect(serviceableRegion('US')).toBe('US');
+    expect(serviceableRegion('ZZ')).toBe('US');
+    expect(serviceableRegion('QQ')).toBe('US');
   });
 });

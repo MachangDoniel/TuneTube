@@ -6,7 +6,9 @@ import { buildHome } from './routes/home';
 import { getArtist, getCategory, getPlaylist } from './routes/browse';
 import { doSearch } from './routes/search';
 import { getLyrics, getRadio } from './routes/watch';
-import { CATEGORIES, MOOD_CHIPS, TRENDING_SEARCHES, type CategoryKey } from './config';
+import {
+  CATEGORIES, MOOD_CHIPS, TRENDING_SEARCHES, serviceableRegion, type CategoryKey,
+} from './config';
 import type { Env } from './types';
 
 const app = new Hono<{ Bindings: Env }>();
@@ -23,10 +25,12 @@ const TTL = {
 } as const;
 
 function client(c: any) {
+  const region = c.req.query('gl') || c.env.YTM_REGION || 'US';
   return new InnerTube(
     c.env.CACHE,
     c.req.query('hl') || c.env.YTM_LANG || 'en',
-    c.req.query('gl') || c.env.YTM_REGION || 'US',
+    region,
+    serviceableRegion(region),
   );
 }
 

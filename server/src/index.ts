@@ -45,7 +45,7 @@ function scope(c: any) {
 app.get('/', (c) => c.json({ service: 'tunetube-api', ok: true }));
 
 app.get('/v1/home', async (c) => {
-  const key = `home:${scope(c)}:v2`;
+  const key = `home:${scope(c)}:v3`;
   try {
     const shelves = await cached(c.env, key, TTL.home, () => buildHome(client(c)), noCache(c));
     return c.json({ shelves });

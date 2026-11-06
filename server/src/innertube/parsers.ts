@@ -425,5 +425,15 @@ export function continuationItems(json: any): { items: any[]; sectionList: any }
 }
 
 export function slug(s: string): string {
-  return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'shelf';
+  if (!s.trim()) return 'shelf';
+  const ascii = s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  if (ascii) return ascii;
+  // A title with no Latin characters (Bengali, Japanese, Arabic...) strips to
+  // nothing, and every such shelf would collide on one id — which silently
+  // deduplicates them away, breaks list identity in the app and makes
+  // hiddenShelfIds hide all of them at once. Hash the original instead: stable
+  // across requests, distinct per title.
+  let hash = 0;
+  for (let i = 0; i < s.length; i++) hash = (Math.imul(31, hash) + s.charCodeAt(i)) | 0;
+  return `shelf-${(hash >>> 0).toString(36)}`;
 }

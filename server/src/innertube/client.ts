@@ -16,7 +16,9 @@ const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
   '(KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36';
 
-const SESSION_KEY = 'innertube:session:v1';
+// visitorData encodes a geolocation hint, so a session bootstrapped for one
+// region must never be reused for another — the key carries the scope.
+const SESSION_KEY_PREFIX = 'innertube:session:v2';
 const SESSION_TTL = 60 * 60 * 6;
 
 // Only used if the homepage scrape fails; requests still work, continuations may not.
@@ -36,11 +38,15 @@ export class InnerTube {
     private region = 'US',
   ) {}
 
+  private get sessionKey(): string {
+    return `${SESSION_KEY_PREFIX}:${this.lang}-${this.region}`;
+  }
+
   /** Scrape clientVersion + visitorData from the YTM homepage, cached in KV. */
   async getSession(): Promise<Session> {
     if (this.session) return this.session;
 
-    const cached = await this.kv.get(SESSION_KEY, 'json');
+    const cached = await this.kv.get(this.sessionKey, 'json');
     if (cached) {
       this.session = cached as Session;
       return this.session;
@@ -71,7 +77,7 @@ export class InnerTube {
     }
 
     this.session = session;
-    await this.kv.put(SESSION_KEY, JSON.stringify(session), {
+    await this.kv.put(this.sessionKey, JSON.stringify(session), {
       expirationTtl: SESSION_TTL,
     });
     return session;

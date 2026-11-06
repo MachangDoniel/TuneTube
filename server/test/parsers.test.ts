@@ -6,7 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   lyricsBrowseId, parseAnyItem, parseAnyShelf, parseCardShelf, parseLyrics, parseWatchPlaylist,
-  sectionContents, unwrapItemSections,
+  sectionContents, slug, unwrapItemSections,
 } from '../src/innertube/parsers';
 import type { MediaItem, Shelf } from '../src/types';
 
@@ -167,5 +167,27 @@ describe('lyrics', () => {
 
   it('returns null for the "Lyrics not available" page', () => {
     expect(parseLyrics(lyricsUnavailable)).toBeNull();
+  });
+});
+
+describe('slug', () => {
+  it('slugifies Latin titles readably', () => {
+    expect(slug('Trending community playlists')).toBe('trending-community-playlists');
+    expect(slug('Ghazal & Sufi Essentials')).toBe('ghazal-sufi-essentials');
+  });
+
+  it('gives non-Latin titles distinct, stable ids', () => {
+    // Regression: these all stripped to the same '' and fell back to one shared
+    // id, so a Bengali or Japanese feed deduplicated down to a single shelf.
+    const bengali = ['ভিডিও চার্ট', 'সেরা শিল্পী', 'ভারতীয় মিউজিক', 'নতুন রিলিজ'];
+    const ids = bengali.map(slug);
+    expect(new Set(ids).size).toBe(bengali.length);
+    expect(ids).not.toContain('shelf');
+    // Stable across calls — the id is a cache key and a list identity.
+    expect(bengali.map(slug)).toEqual(ids);
+  });
+
+  it('still has a defined result for an empty title', () => {
+    expect(slug('')).toBe('shelf');
   });
 });

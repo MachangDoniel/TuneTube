@@ -4,6 +4,7 @@ struct HomeView: View {
     @State private var model = HomeViewModel()
     @Environment(Navigator.self) private var navigator
     @Environment(AuthService.self) private var auth
+    @Environment(AppSettings.self) private var settings
 
     private var recentStore = RecentStore.shared
 
@@ -43,6 +44,11 @@ struct HomeView: View {
         .refreshable {
             recentStore.load()
             await model.load(forceRefresh: true)
+        }
+        // The caches are already cleared by the time this token moves, so the
+        // refetch below can't read a response from the previous region.
+        .onChange(of: settings.localeRevision) { _, _ in
+            Task { await model.load(forceRefresh: true) }
         }
     }
 

@@ -13,6 +13,8 @@ enum Route: Hashable {
     case playlist(id: String, title: String)
     case localPlaylist(id: UUID)
     case downloads
+    case regionPicker
+    case languagePicker
 }
 
 /// Owns tab selection and a navigation path per tab, so pushing a detail screen

@@ -50,4 +50,16 @@ actor DiskCache {
     func readStale(for key: String) -> Data? {
         read(for: key, maxAge: nil)
     }
+
+    /// Drops everything. Used when the content region or language changes: every
+    /// cached response was fetched for the old `gl`/`hl` and would be wrong.
+    func clearAll() {
+        memoryCache.removeAllObjects()
+        guard let files = try? FileManager.default.contentsOfDirectory(
+            at: directory, includingPropertiesForKeys: nil
+        ) else { return }
+        for file in files {
+            try? FileManager.default.removeItem(at: file)
+        }
+    }
 }

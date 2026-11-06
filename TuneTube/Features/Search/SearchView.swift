@@ -4,6 +4,7 @@ struct SearchView: View {
     @State private var model = SearchViewModel()
     @Environment(PlayerEngine.self) private var player
     @Environment(Navigator.self) private var navigator
+    @Environment(AppSettings.self) private var settings
     @FocusState private var isFocused: Bool
 
     var body: some View {
@@ -39,6 +40,10 @@ struct SearchView: View {
             consumePendingArtist()
         }
         .onChange(of: navigator.pendingArtistSearch) { _, _ in consumePendingArtist() }
+        .onChange(of: settings.localeRevision) { _, _ in
+            model.localeDidChange()
+            Task { await model.loadConfig() }
+        }
     }
 
     private func consumePendingArtist() {

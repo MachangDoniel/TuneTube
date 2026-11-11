@@ -18,11 +18,7 @@ final class HomeViewModel {
         isLoading = true
         errorMessage = nil
         do {
-            let config = try? await APIClient.shared.config(forceRefresh: forceRefresh)
-            let hidden = Set(config?.hiddenShelfIds ?? [])
-            let fetched = try await APIClient.shared.home(forceRefresh: forceRefresh)
-            // hiddenShelfIds is the remote kill-switch for a shelf that breaks.
-            shelves = fetched.filter { !hidden.contains($0.id) }
+            shelves = try await APIClient.shared.home(forceRefresh: forceRefresh)
             hasLoaded = true
         } catch {
             if shelves.isEmpty {

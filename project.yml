@@ -9,9 +9,6 @@ packages:
   YouTubePlayerKit:
     url: https://github.com/SvenTiigi/YouTubePlayerKit
     from: 2.0.0
-  YouTubeKit:
-    url: https://github.com/alexeichhorn/YouTubeKit
-    from: 0.4.9
   DebugSwift:
     url: https://github.com/DebugSwift/DebugSwift.git
     branch: main
@@ -33,16 +30,8 @@ targets:
       - path: TuneTube
     dependencies:
       - package: YouTubePlayerKit
-      - package: YouTubeKit
       - package: DebugSwift
     settings:
-      configs:
-        Debug:
-          # Dev API host for local testing on Mac/LAN
-          API_BASE_URL: http://Doniels-MacBook-Air.local:8799
-        Release:
-          # Production Cloudflare Worker edge API for TestFlight and App Store
-          API_BASE_URL: https://tunetube-api.tunetube-app.workers.dev
       base:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         PRODUCT_BUNDLE_IDENTIFIER: com.tunetube.app

@@ -1,21 +1,19 @@
 import SwiftUI
 
-/// The queue: "Playing from", autoplay toggle, and the track list. Long-press a
+/// The playback queue. Long-press a
 /// row to drag it, swipe to remove it, tap to jump to it.
 struct UpNextSheet: View {
     @Environment(PlayerEngine.self) private var player
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        @Bindable var player = player
-
         VStack(spacing: 0) {
             HStack(alignment: .center) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(player.queueTitle == nil ? "Up next" : "Playing from")
+                    Text("Up next")
                         .font(.system(size: 13))
                         .foregroundStyle(Theme.textSecondary)
-                    Text(player.queueTitle ?? "Your queue")
+                    Text("Your queue")
                         .font(.system(size: 18, weight: .bold))
                         .foregroundStyle(Theme.textPrimary)
                         .lineLimit(1)
@@ -33,20 +31,6 @@ struct UpNextSheet: View {
             .padding(.horizontal, 20)
             .padding(.top, 22)
             .padding(.bottom, 14)
-
-            Toggle(isOn: $player.isAutoplayEnabled) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Autoplay")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(Theme.textPrimary)
-                    Text("Keep playing similar songs when your queue ends")
-                        .font(.system(size: 12))
-                        .foregroundStyle(Theme.textSecondary)
-                }
-            }
-            .tint(Theme.accent)
-            .padding(.horizontal, 20)
-            .padding(.bottom, 10)
 
             ScrollViewReader { proxy in
                 List {
@@ -78,17 +62,6 @@ struct UpNextSheet: View {
                         player.removeFromQueue(at: offsets)
                     }
 
-                    if player.isExtendingQueue {
-                        HStack(spacing: 10) {
-                            ProgressView().tint(.white)
-                            Text("Adding similar songs…")
-                                .font(.system(size: 13))
-                                .foregroundStyle(Theme.textSecondary)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .listRowBackground(Color.clear)
-                        .listRowSeparator(.hidden)
-                    }
                 }
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)

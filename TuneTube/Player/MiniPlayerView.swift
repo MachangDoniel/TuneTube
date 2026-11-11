@@ -40,7 +40,11 @@ struct MiniPlayerView: View {
 
                     // Play / Pause Button
                     Button {
-                        player.togglePlayPause()
+                        if player.isNativeAVPlayer {
+                            player.togglePlayPause()
+                        } else {
+                            navigator.showPlayer = true
+                        }
                     } label: {
                         PlayPauseLoadingButton(
                             isPlaying: player.isPlaying,

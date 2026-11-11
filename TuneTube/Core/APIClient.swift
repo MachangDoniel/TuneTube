@@ -1,301 +1,204 @@
 import Foundation
 
 enum APIError: LocalizedError {
-    case badStatus(Int)
-    case rateLimited
-    case transport(Error)
+    case missingKey, unavailable, badStatus(Int)
 
     var errorDescription: String? {
         switch self {
-        case .rateLimited:
-            return "Server limit reached. Showing last loaded content."
-        case .badStatus(let code):
-            if code == 429 || code == 503 || code == 529 || code == 530 {
-                return "Server limit reached. Showing last loaded content."
-            }
-            return "Server returned \(code)."
-        case .transport:
-            #if DEBUG
-            return "Can't reach the API at \(AppConfig.apiBaseURL.absoluteString) or Cloudflare Worker."
-            #else
-            return "Can't reach TuneTube right now."
-            #endif
+        case .missingKey: return "Set YOUTUBE_DATA_API_KEY in the app’s build settings to browse YouTube."
+        case .unavailable: return "This item isn’t available through the YouTube Data API."
+        case .badStatus(403), .badStatus(429): return "YouTube denied the request. Check your API key and quota."
+        case .badStatus(let status): return "YouTube returned HTTP \(status)."
         }
     }
 }
 
-/// Talks to the TuneTube Worker. Every read goes through `DiskCache` so a cold
-/// launch with no network still shows the last known feed.
 actor APIClient {
     static let shared = APIClient()
 
+    private struct Page<Item: Decodable>: Decodable {
+        let items: [Item]
+    }
+
+    private struct Snippet: Decodable {
+        let title: String
+        let description: String?
+        let channelTitle: String?
+        let thumbnails: [String: Thumbnail]?
+        let resourceId: ResourceID?
+
+        struct Thumbnail: Decodable { let url: URL }
+        var artwork: URL? {
+            thumbnails?["high"]?.url ?? thumbnails?["medium"]?.url ?? thumbnails?["default"]?.url
+        }
+
+        func media(id: String, kind: MediaKind = .video) -> MediaItem {
+            MediaItem(id: id, kind: kind, title: title, subtitle: channelTitle,
+                      thumbnailUrl: artwork, artistName: channelTitle)
+        }
+    }
+
+    private struct ResourceID: Decodable {
+        let videoId: String?
+        let channelId: String?
+        let playlistId: String?
+    }
+
+    private struct SearchResult: Decodable {
+        let id: ResourceID
+        let snippet: Snippet
+    }
+
+    private struct Resource: Decodable {
+        let id: String
+        let snippet: Snippet
+        let status: Status?
+        let contentDetails: ContentDetails?
+
+        struct Status: Decodable { let embeddable: Bool? }
+        struct ContentDetails: Decodable {
+            let relatedPlaylists: RelatedPlaylists?
+            struct RelatedPlaylists: Decodable { let uploads: String? }
+        }
+    }
+
     private let session: URLSession
-    private let decoder = JSONDecoder()
-    private let encoder = JSONEncoder()
-    private let cache = DiskCache()
-    private var bearerToken: String?
+    private final class CachedPage {
+        let data: Data
+        let expiresAt = Date().addingTimeInterval(900)
+        init(_ data: Data) { self.data = data }
+    }
 
-    #if DEBUG
-    private var currentBaseURL: URL = AppConfig.initialBaseURL
-    private var isUsingFallback: Bool = false
-    #else
-    private let currentBaseURL: URL = AppConfig.initialBaseURL
-    #endif
+    private let cache = NSCache<NSURL, CachedPage>()
 
-    init(session: URLSession = .shared) {
+    init(session: URLSession = URLSession(configuration: .ephemeral)) {
         self.session = session
+        cache.countLimit = 120
     }
 
-    /// Sets or clears the Bearer token for authenticated requests.
-    func setBearerToken(_ token: String?) {
-        self.bearerToken = token
-    }
-
-    /// Active base URL being used by the client.
-    var activeBaseURL: URL {
-        currentBaseURL
-    }
-
-    #if DEBUG
-    /// Resets base URL back to the local Mac server (e.g. after restarting Wrangler).
-    func resetToLocalServer() {
-        currentBaseURL = AppConfig.localBaseURL
-        isUsingFallback = false
-        DebugLog.network.notice("Reset API base URL to local server: \(AppConfig.localBaseURL.absoluteString, privacy: .public)")
-    }
-    #endif
-
-    private func url(for baseURL: URL, path: String, query: [String: String] = [:]) -> URL {
-        var comps = URLComponents(url: baseURL.appendingPathComponent(path),
-                                  resolvingAgainstBaseURL: false)!
-        var items = query.map { URLQueryItem(name: $0.key, value: $0.value) }
-        items.append(URLQueryItem(name: "gl", value: AppConfig.region))
-        items.append(URLQueryItem(name: "hl", value: AppConfig.language))
-        comps.queryItems = items
-        return comps.url!
-    }
-
-    private func makeRequest(
-        baseURL: URL,
-        path: String,
-        query: [String: String] = [:],
-        headers: [String: String] = [:],
-        method: String = "GET",
-        timeoutInterval: TimeInterval = 60.0
-    ) -> URLRequest {
-        var req = URLRequest(url: url(for: baseURL, path: path, query: query))
-        req.httpMethod = method
-        req.timeoutInterval = timeoutInterval
-        req.setValue("application/json", forHTTPHeaderField: "Accept")
-        if let bearerToken {
-            req.setValue("Bearer \(bearerToken)", forHTTPHeaderField: "Authorization")
+    private func page<Item: Decodable>(
+        _ endpoint: String, _ parameters: [String: String], forceRefresh: Bool = false
+    ) async throws -> Page<Item> {
+        var url = URLComponents()
+        url.scheme = "https"
+        url.host = "www.googleapis.com"
+        url.path = "/youtube/v3/\(endpoint)"
+        url.queryItems = parameters.sorted { $0.key < $1.key }.map {
+            URLQueryItem(name: $0.key, value: $0.value)
         }
-        for (key, value) in headers {
-            req.setValue(value, forHTTPHeaderField: key)
+        let decoder = JSONDecoder()
+        guard let requestURL = url.url else { throw APIError.unavailable }
+        let cacheKey = requestURL as NSURL
+        if !forceRefresh, let cached = cache.object(forKey: cacheKey), cached.expiresAt > Date(),
+           let page = try? decoder.decode(Page<Item>.self, from: cached.data) {
+            return page
         }
-        return req
-    }
-
-    private func execute<T: Decodable & Sendable>(
-        _ type: T.Type,
-        request: URLRequest,
-        cacheKey: String?
-    ) async throws -> T {
-        let startTime = CFAbsoluteTimeGetCurrent()
-        #if DEBUG
-        NetworkLogger.logRequest(request)
-        #endif
-
-        do {
-            let (data, response) = try await session.data(for: request)
-            let duration = CFAbsoluteTimeGetCurrent() - startTime
-            #if DEBUG
-            NetworkLogger.logResponse(response, data: data, duration: duration, for: request)
-            #endif
-
-            guard let http = response as? HTTPURLResponse else {
-                throw APIError.badStatus(-1)
-            }
-            if http.statusCode == 429 || http.statusCode == 503 || http.statusCode == 529 || http.statusCode == 530 {
-                #if DEBUG
-                DebugLog.network.warning("⚠️ Cloudflare/Server limit reached (status \(http.statusCode)).")
-                #endif
-                throw APIError.rateLimited
-            }
-            guard (200..<300).contains(http.statusCode) else {
-                throw APIError.badStatus(http.statusCode)
-            }
-            let value = try decoder.decode(T.self, from: data)
-            if let cacheKey { await cache.write(data, for: cacheKey) }
-            return value
-        } catch {
-            let duration = CFAbsoluteTimeGetCurrent() - startTime
-            #if DEBUG
-            NetworkLogger.logError(error, duration: duration, for: request)
-            #endif
-            throw error
-        }
-    }
-
-    /// Fetch + decode, writing through to the disk cache. On failure, fall back
-    /// to the cached copy rather than showing an empty screen. A nil `cacheKey`
-    /// skips the disk cache (one-shot responses like continuation pages).
-    enum TTL {
-        static let home: TimeInterval = 3600       // 1 hour
-        static let search: TimeInterval = 900      // 15 minutes
-        static let artist: TimeInterval = 86400    // 24 hours
-        static let playlist: TimeInterval = 21600  // 6 hours
-        static let category: TimeInterval = 21600  // 6 hours
-        static let config: TimeInterval = 3600     // 1 hour
-    }
-
-    /// Fetch + decode, writing through to the disk cache.
-    /// Uses Cache-First strategy when `ttl` is provided to eliminate redundant network calls.
-    private func get<T: Decodable & Sendable>(
-        _ type: T.Type,
-        path: String,
-        query: [String: String] = [:],
-        headers: [String: String] = [:],
-        cacheKey: String?,
-        ttl: TimeInterval? = nil,
-        forceRefresh: Bool = false
-    ) async throws -> T {
-        // 1. Cache-First check: if not forcing refresh and fresh cached data exists, return instantly (0ms, 0 network)
-        if !forceRefresh, let cacheKey, let ttl {
-            if let freshData = await cache.read(for: cacheKey, maxAge: ttl),
-               let cached = try? decoder.decode(T.self, from: freshData) {
-                #if DEBUG
-                DebugLog.network.notice("⚡️ Cache hit for '\(cacheKey, privacy: .public)' (TTL: \(Int(ttl))s). Skipping network call.")
-                #endif
-                return cached
-            }
-        }
-
-        #if DEBUG
-        let targetBaseURL = currentBaseURL
-        let isAttemptingLocal = (!isUsingFallback && targetBaseURL == AppConfig.localBaseURL)
-        let timeout: TimeInterval = isAttemptingLocal ? 5.0 : 60.0
-        #else
-        let targetBaseURL = currentBaseURL
-        let timeout: TimeInterval = 60.0
-        #endif
-
-        let request = makeRequest(
-            baseURL: targetBaseURL,
-            path: path,
-            query: query,
-            headers: headers,
-            timeoutInterval: timeout
-        )
-
-        do {
-            return try await execute(type, request: request, cacheKey: cacheKey)
-        } catch {
-            #if DEBUG
-            if isAttemptingLocal {
-                DebugLog.network.notice("⚠️ Local server at \(targetBaseURL.absoluteString, privacy: .public) not connected within 5s (\(error.localizedDescription, privacy: .public)). Falling back to Cloudflare: \(AppConfig.productionBaseURL.absoluteString, privacy: .public)")
-                self.currentBaseURL = AppConfig.productionBaseURL
-                self.isUsingFallback = true
-
-                let fallbackRequest = makeRequest(
-                    baseURL: AppConfig.productionBaseURL,
-                    path: path,
-                    query: query,
-                    headers: headers,
-                    timeoutInterval: 60.0
-                )
-                do {
-                    return try await execute(type, request: fallbackRequest, cacheKey: cacheKey)
-                } catch let fallbackError {
-                    if let cacheKey,
-                       let data = await cache.readStale(for: cacheKey),
-                       let cached = try? decoder.decode(T.self, from: data) {
-                        return cached
-                    }
-                    throw fallbackError
-                }
-            }
-            #endif
-
-            if let cacheKey,
-               let data = await cache.readStale(for: cacheKey),
-               let cached = try? decoder.decode(T.self, from: data) {
-                return cached
-            }
-            throw error
-        }
+        guard let key = AppConfig.youtubeAPIKey else { throw APIError.missingKey }
+        var request = URLRequest(url: requestURL, cachePolicy: .reloadIgnoringLocalCacheData)
+        request.setValue(key, forHTTPHeaderField: "X-Goog-Api-Key")
+        request.setValue(Bundle.main.bundleIdentifier, forHTTPHeaderField: "X-Ios-Bundle-Identifier")
+        let (data, response) = try await session.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+        guard (200..<300).contains(status) else { throw APIError.badStatus(status) }
+        let result = try decoder.decode(Page<Item>.self, from: data)
+        cache.setObject(CachedPage(data), forKey: cacheKey)
+        return result
     }
 
     func home(forceRefresh: Bool = false) async throws -> [Shelf] {
-        try await get(HomeResponse.self, path: "v1/home", cacheKey: "home", ttl: TTL.home, forceRefresh: forceRefresh).shelves
+        let result: Page<Resource> = try await page("videos", [
+            "part": "snippet,status", "chart": "mostPopular", "videoCategoryId": "10",
+            "regionCode": AppConfig.region, "maxResults": "25"
+        ], forceRefresh: forceRefresh)
+        return [Shelf(id: "popular", title: "Popular on YouTube", items: result.items
+            .filter { $0.status?.embeddable == true }
+            .map { $0.snippet.media(id: $0.id) })]
     }
 
     func search(_ query: String, type: String? = nil, forceRefresh: Bool = false) async throws -> [Shelf] {
-        var q = ["q": query]
-        if let type { q["type"] = type }
-        let key = "search-\(query.lowercased())-\(type ?? "all")"
-        do {
-            let response = try await get(SearchResponse.self, path: "v1/search", query: q, cacheKey: key, ttl: TTL.search, forceRefresh: forceRefresh)
-            if !response.shelves.isEmpty, let data = try? encoder.encode(response) {
-                await cache.write(data, for: "search-last-loaded")
-            }
-            return response.shelves
-        } catch {
-            // If rate-limited or failed and this specific query isn't cached, fall back to last loaded search
-            if let data = await cache.readStale(for: "search-last-loaded"),
-               let cached = try? decoder.decode(SearchResponse.self, from: data) {
-                #if DEBUG
-                DebugLog.network.warning("Cloudflare limit or error on search. Serving last loaded search.")
-                #endif
-                return cached.shelves
-            }
-            throw error
+        let resourceType: String
+        switch type {
+        case "artist", "artists": resourceType = "channel"
+        case "playlist", "playlists": resourceType = "playlist"
+        case "album", "albums": return []
+        case nil, "all": resourceType = "video,channel,playlist"
+        default: resourceType = "video"
         }
-    }
-
-    /// Returns the most recently loaded search results from cache if available.
-    func lastLoadedSearch() async -> [Shelf]? {
-        if let data = await cache.readStale(for: "search-last-loaded"),
-           let cached = try? decoder.decode(SearchResponse.self, from: data) {
-            return cached.shelves
+        var parameters = [
+            "part": "snippet", "q": query, "type": resourceType, "maxResults": "25",
+            "regionCode": AppConfig.region, "relevanceLanguage": AppConfig.language
+        ]
+        if resourceType == "video" {
+            parameters["videoEmbeddable"] = "true"
+            parameters["videoCategoryId"] = "10"
         }
-        return nil
+        let result: Page<SearchResult> = try await page("search", parameters, forceRefresh: forceRefresh)
+        let embeddable: Set<String>
+        if resourceType.contains("video"), resourceType != "video" {
+            let ids = result.items.compactMap { $0.id.videoId }
+            embeddable = Set(try await playableVideos(ids, forceRefresh: forceRefresh).keys)
+        } else {
+            embeddable = Set(result.items.compactMap { $0.id.videoId })
+        }
+        let items = result.items.compactMap { item -> MediaItem? in
+            if let id = item.id.videoId, embeddable.contains(id) { return item.snippet.media(id: id) }
+            if let id = item.id.channelId { return item.snippet.media(id: id, kind: .artist) }
+            if let id = item.id.playlistId { return item.snippet.media(id: id, kind: .playlist) }
+            return nil
+        }
+        return [(MediaKind.video, "Videos"), (.artist, "Channels"), (.playlist, "Playlists")]
+            .compactMap { kind, title -> Shelf? in
+                let matches = items.filter { $0.kind == kind }
+                return matches.isEmpty ? nil : Shelf(id: kind.rawValue, title: title, items: matches)
+            }
     }
 
     func artist(_ browseId: String, forceRefresh: Bool = false) async throws -> ArtistDetail {
-        try await get(ArtistDetail.self, path: "v1/artist/\(browseId)",
-                      cacheKey: "artist-\(browseId)", ttl: TTL.artist, forceRefresh: forceRefresh)
+        let result: Page<Resource> = try await page("channels", [
+            "part": "snippet,contentDetails", "id": browseId
+        ], forceRefresh: forceRefresh)
+        guard let channel = result.items.first else { throw APIError.unavailable }
+        var shelves: [Shelf] = []
+        if let uploads = channel.contentDetails?.relatedPlaylists?.uploads {
+            let items = try await playlistTracks(uploads, forceRefresh: forceRefresh)
+            shelves = [Shelf(id: uploads, title: "Uploads", items: items)]
+        }
+        return ArtistDetail(id: channel.id, name: channel.snippet.title,
+                            description: channel.snippet.description, thumbnailUrl: channel.snippet.artwork,
+                            subscribers: nil, shelves: shelves)
     }
 
     func playlist(_ playlistId: String, forceRefresh: Bool = false) async throws -> PlaylistDetail {
-        try await get(PlaylistDetail.self, path: "v1/playlist/\(playlistId)",
-                      cacheKey: "playlist-\(playlistId)", ttl: TTL.playlist, forceRefresh: forceRefresh)
+        let result: Page<Resource> = try await page("playlists", [
+            "part": "snippet", "id": playlistId
+        ], forceRefresh: forceRefresh)
+        guard let playlist = result.items.first else { throw APIError.unavailable }
+        let tracks = try await playlistTracks(playlistId, forceRefresh: forceRefresh)
+        return PlaylistDetail(id: playlist.id, title: playlist.snippet.title,
+                              subtitle: playlist.snippet.channelTitle, description: playlist.snippet.description,
+                              thumbnailUrl: playlist.snippet.artwork, tracks: tracks)
     }
 
-    func category(_ key: String, forceRefresh: Bool = false) async throws -> [Shelf] {
-        struct CategoryResponse: Codable { let shelves: [Shelf] }
-        return try await get(CategoryResponse.self, path: "v1/category/\(key)",
-                             cacheKey: "category-\(key)", ttl: TTL.category, forceRefresh: forceRefresh).shelves
+    private func playlistTracks(_ id: String, forceRefresh: Bool) async throws -> [MediaItem] {
+        let result: Page<Resource> = try await page("playlistItems", [
+            "part": "snippet", "playlistId": id, "maxResults": "50"
+        ], forceRefresh: forceRefresh)
+        let videos = result.items.compactMap { $0.snippet.resourceId?.videoId }
+        let playable = try await playableVideos(videos, forceRefresh: forceRefresh)
+        return videos.compactMap { playable[$0] }
     }
 
-    func radio(for videoId: String, continuation: String? = nil) async throws -> RadioPage {
-        try await get(RadioPage.self, path: "v1/radio/\(videoId)",
-                      query: continuation.map { ["continuation": $0] } ?? [:],
-                      cacheKey: continuation == nil ? "radio-\(videoId)" : nil)
+    private func playableVideos(_ videos: [String], forceRefresh: Bool) async throws -> [String: MediaItem] {
+        guard !videos.isEmpty else { return [:] }
+        let details: Page<Resource> = try await page("videos", [
+            "part": "snippet,status", "id": Array(Set(videos)).sorted().joined(separator: ",")
+        ], forceRefresh: forceRefresh)
+        return Dictionary(uniqueKeysWithValues: details.items.filter {
+            $0.status?.embeddable == true
+        }.map { ($0.id, $0.snippet.media(id: $0.id)) })
     }
 
-    func lyrics(for videoId: String) async throws -> Lyrics? {
-        try await get(LyricsResponse.self, path: "v1/lyrics/\(videoId)",
-                      cacheKey: "lyrics-\(videoId)").lyrics
-    }
-
-    func config(forceRefresh: Bool = false) async throws -> RemoteConfig {
-        try await get(RemoteConfig.self, path: "v1/config", cacheKey: "config", ttl: TTL.config, forceRefresh: forceRefresh)
-    }
-
-    /// Drops every cached response. Called when the content region or language
-    /// changes, since each cached body was fetched for the previous `gl`/`hl`.
-    func clearCaches() async {
-        await cache.clearAll()
+    func clearCaches() {
+        cache.removeAllObjects()
     }
 }

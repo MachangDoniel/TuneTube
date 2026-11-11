@@ -1,44 +1,14 @@
 import Foundation
 
 enum AppConfig {
-    /// Production Cloudflare Worker edge API.
-    static let productionBaseURL = URL(string: "https://tunetube-api.tunetube-app.workers.dev")!
-
-    #if DEBUG
-    /// Where the local Mac Worker lives in debug mode.
-    static let localBaseURL: URL = {
-        if let override = ProcessInfo.processInfo.environment["TUNETUBE_API"],
-           let url = URL(string: override), url.host != nil {
-            return url
-        }
-        if let configured = Bundle.main.object(forInfoDictionaryKey: "TuneTubeAPIBaseURL") as? String,
-           let url = URL(string: configured), url.host != nil {
-            return url
-        }
-        return URL(string: "http://Doniels-MacBook-Air.local:8799")!
-    }()
-
-    /// The initial base URL for API requests. In debug builds, attempts local first.
-    static let initialBaseURL: URL = localBaseURL
-    #else
-    /// In release builds, always use the production Cloudflare edge API.
-    static let initialBaseURL: URL = {
-        if let configured = Bundle.main.object(forInfoDictionaryKey: "TuneTubeAPIBaseURL") as? String,
-           let url = URL(string: configured), url.host != nil {
-            return url
-        }
-        return productionBaseURL
-    }()
-    #endif
-
-    /// Default base URL reference for error messages and backward compatibility.
-    static var apiBaseURL: URL {
-        initialBaseURL
+    static var youtubeAPIKey: String? {
+        let configured = ProcessInfo.processInfo.environment["YOUTUBE_DATA_API_KEY"]
+            ?? Bundle.main.object(forInfoDictionaryKey: "YouTubeDataAPIKey") as? String
+        guard let key = configured?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !key.isEmpty, !key.hasPrefix("$(") else { return nil }
+        return key
     }
 
-    /// Content region and language, sent as `gl`/`hl` on every request. These
-    /// are user preferences now, so read them per request rather than caching
-    /// the value — `AppSettings` can change them mid-session.
     static var region: String { LocalePreference.region }
     static var language: String { LocalePreference.language }
 

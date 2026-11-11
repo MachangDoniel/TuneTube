@@ -81,10 +81,6 @@ struct LocalPlaylistView: View {
                                 Button(role: .destructive) {
                                     itemToRemoveDownload = item
                                 } label: { Label("Remove Download", systemImage: "trash") }
-                            } else {
-                                Button {
-                                    DownloadManager.shared.startDownload(item: item)
-                                } label: { Label("Download", systemImage: "arrow.down.circle") }
                             }
 
                             Button(role: .destructive) {

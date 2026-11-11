@@ -6,6 +6,7 @@ final class SearchViewModel {
     var query = ""
     private(set) var shelves: [Shelf] = []
     private(set) var isSearching = false
+    private(set) var errorMessage: String?
     private(set) var config: RemoteConfig = .fallback
 
     private var searchTask: Task<Void, Never>?
@@ -18,6 +19,7 @@ final class SearchViewModel {
     /// Debounced to 450ms so typing doesn't spam requests, with instant in-memory cache lookup.
     func queryChanged() {
         searchTask?.cancel()
+        errorMessage = nil
         let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard text.count >= 2 else {
             shelves = []
@@ -41,6 +43,7 @@ final class SearchViewModel {
 
     func searchNow(_ text: String) {
         searchTask?.cancel()
+        errorMessage = nil
         query = text
         let key = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if let cached = searchMemoryCache[key] {
@@ -48,11 +51,12 @@ final class SearchViewModel {
             isSearching = false
             return
         }
-        Task { await run(text) }
+        searchTask = Task { await run(text) }
     }
 
     func clear() {
         searchTask?.cancel()
+        errorMessage = nil
         query = ""
         shelves = []
         isSearching = false
@@ -62,6 +66,7 @@ final class SearchViewModel {
     /// `gl`/`hl`, so drop them and re-run whatever is in the field.
     func localeDidChange() {
         searchTask?.cancel()
+        errorMessage = nil
         searchMemoryCache.removeAll()
         shelves = []
         isSearching = false
@@ -74,17 +79,16 @@ final class SearchViewModel {
     private func run(_ text: String) async {
         let key = text.lowercased()
         isSearching = true
-        defer { isSearching = false }
+        defer { if !Task.isCancelled { isSearching = false } }
         do {
             let results = try await APIClient.shared.search(text)
+            try Task.checkCancellation()
             searchMemoryCache[key] = results
-            if !results.isEmpty || shelves.isEmpty {
-                shelves = results
-            }
+            shelves = results
         } catch {
-            if shelves.isEmpty, let fallback = await APIClient.shared.lastLoadedSearch() {
-                shelves = fallback
-            }
+            guard !Task.isCancelled else { return }
+            shelves = []
+            errorMessage = error.localizedDescription
         }
     }
 }

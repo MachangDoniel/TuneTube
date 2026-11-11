@@ -17,7 +17,11 @@ struct SearchView: View {
 
                 searchField
 
-                if model.shelves.isEmpty && !model.isSearching {
+                if let error = model.errorMessage {
+                    Text(error)
+                        .foregroundStyle(Theme.textSecondary)
+                        .padding(.horizontal, 16)
+                } else if model.shelves.isEmpty && !model.isSearching {
                     browseSection
                 } else {
                     ForEach(model.shelves) { shelf in

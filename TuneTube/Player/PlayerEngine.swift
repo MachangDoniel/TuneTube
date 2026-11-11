@@ -170,6 +170,9 @@ final class PlayerEngine {
     private var cancellables = Set<AnyCancellable>()
     private var timeObserverToken: Any?
     private var currentLoadTask: Task<Void, Never>?
+    #if DEBUG
+    private var nativeStartupBegan: ContinuousClock.Instant?
+    #endif
     private var currentExpectedDuration: Double?
 
     /// Cached so we don't refetch lock-screen artwork on every Now Playing update.
@@ -463,6 +466,9 @@ final class PlayerEngine {
     }
 
     func pause() {
+        #if DEBUG
+        nativeStartupBegan = nil
+        #endif
         intendedPlaying = false
         isLoading = false
         currentLoadTask?.cancel()
@@ -494,6 +500,9 @@ final class PlayerEngine {
 
     private func loadCurrent() {
         guard let item = current else { return }
+        #if DEBUG
+        nativeStartupBegan = .now
+        #endif
         prefetchAutoplayIfNeeded()
 
         // Immediately silence and stop any currently playing audio/video from the previous track
@@ -1013,6 +1022,17 @@ final class PlayerEngine {
                     self.isPlaying = true
                     self.isLoading = false
                     self.intendedPlaying = true
+                    #if DEBUG
+                    if let started = self.nativeStartupBegan,
+                       self.avPlayer.timeControlStatus == .playing,
+                       self.avPlayer.currentItem != nil {
+                        self.nativeStartupBegan = nil
+                        let elapsed = started.duration(to: .now).components
+                        let milliseconds = Double(elapsed.seconds) * 1_000
+                            + Double(elapsed.attoseconds) / 1e15
+                        engineLogger.notice("Native playback startup: \(milliseconds, privacy: .public) ms")
+                    }
+                    #endif
                 case .paused:
                     self.isPlaying = false
                     if !self.intendedPlaying {

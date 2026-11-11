@@ -1,5 +1,17 @@
 # TuneTube
 
+## Direct catalog build
+
+The iOS app on this branch sends catalog requests directly to YouTube Music.
+It does not require a Cloudflare Worker, a custom API URL, or a Data API key.
+The diagram and deployment instructions below describe the original Worker
+setup on V1.
+
+Run `xcodegen generate` and open `TuneTube.xcodeproj`. The app bundles the
+catalog logic from `server/src`. After changing the shared TypeScript catalog
+code, run `npm ci` and `npm run build:ios-catalog` from `server/` and include
+the updated JavaScript resource in the change.
+
 A premium YouTube-backed music streaming and offline player for iOS. Browse, search, stream, and download music with a native SwiftUI interface — powered by YouTube Music metadata, a high-performance dual-engine player, and Apple Files app integration.
 
 ```

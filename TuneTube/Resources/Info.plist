@@ -37,13 +37,6 @@
 	<true/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
-	<key>NSAppTransportSecurity</key>
-	<dict>
-		<key>NSAllowsLocalNetworking</key>
-		<true/>
-	</dict>
-	<key>TuneTubeAPIBaseURL</key>
-	<string>$(API_BASE_URL)</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>

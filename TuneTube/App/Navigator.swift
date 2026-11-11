@@ -1,11 +1,6 @@
 import Foundation
 import SwiftUI
 
-enum PlayerDisplayMode: String, CaseIterable, Sendable {
-    case song = "Song"
-    case video = "Video"
-}
-
 enum Tab: Hashable { case home, search, library, profile }
 
 enum Route: Hashable {
@@ -32,7 +27,6 @@ final class Navigator {
     var userFirstName = "there"
 
     var showPlayer = false
-    var playerDisplayMode: PlayerDisplayMode = .song
 
     /// "Go to Artist" from the player: songs carry an artist name but no artist
     /// browseId, so we hand the name to Search to resolve.
@@ -52,16 +46,10 @@ final class Navigator {
     func open(_ item: MediaItem, within context: [MediaItem] = [], player: PlayerEngine? = nil) {
         let activePlayer = player ?? PlayerEngine.shared
         switch item.kind {
-        case .song:
-            playerDisplayMode = .song
-            activePlayer.displayMode = .song
-            activePlayer.play(item, in: context)
+        case .song, .video:
             showPlayer = true
-        case .video:
-            playerDisplayMode = .video
-            activePlayer.displayMode = .video
+            activePlayer.isVideoPlayerVisible = true
             activePlayer.play(item, in: context)
-            showPlayer = true
         case .artist:
             push(.artist(id: item.id, name: item.title))
         case .playlist, .album:

@@ -35,17 +35,15 @@ struct RootView: View {
                 .animation(.spring(response: 0.36, dampingFraction: 0.88), value: nav.showPlayer)
                 .ignoresSafeArea()
         }
+        .onChange(of: nav.showPlayer) { _, visible in
+            player.isVideoPlayerVisible = visible
+        }
         .task {
-            player.onFallbackToSongMode = { navigator.playerDisplayMode = .song }
             await store.bootstrap()
             #if DEBUG
             if let autoPlayID = ProcessInfo.processInfo.environment["TUNETUBE_AUTOPLAY_ID"] {
-                let item = MediaItem(id: autoPlayID, kind: .song, title: "Test Song", artistName: "Test Artist")
-                if ProcessInfo.processInfo.environment["TUNETUBE_SHOW_PLAYER"] == "1" {
-                    navigator.open(item, within: [item], player: player)
-                } else {
-                    player.play(item, in: [item])
-                }
+                let item = MediaItem(id: autoPlayID, kind: .video, title: "Test Video")
+                navigator.open(item, within: [item], player: player)
             }
             #endif
         }
@@ -81,16 +79,6 @@ struct RootView: View {
             navigator.showPlayer = false
         case "togglePlayer":
             navigator.showPlayer.toggle()
-        case "displayMode":
-            if let modeStr = components.queryItems?.first(where: { $0.name == "mode" })?.value {
-                if modeStr.lowercased() == "song" {
-                    navigator.playerDisplayMode = .song
-                    player.setDisplayMode(.song)
-                } else if modeStr.lowercased() == "video" {
-                    navigator.playerDisplayMode = .video
-                    player.setDisplayMode(.video)
-                }
-            }
         case "forward10":
             player.forward10()
         case "backward10":

@@ -75,9 +75,6 @@ struct AddToPlaylistSheet: View {
         }
         .task {
             library.ensureDefaultPlaylist()
-            if let config = try? await APIClient.shared.config() {
-                freeLimit = config.freePlaylistLimit
-            }
         }
         // Paywall sheet commented out - everything is free
         /*

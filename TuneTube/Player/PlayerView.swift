@@ -3,7 +3,7 @@ import SwiftUI
 import YouTubePlayerKit
 
 /// Full-screen player, laid out after YouTube Music: big artwork, title, a
-/// scrollable row of action chips, scrubber, transport, and Up next / Lyrics tabs.
+/// scrollable row of action chips, scrubber, transport, and Up next tabs.
 struct PlayerView: View {
     @Environment(PlayerEngine.self) private var player
     @Environment(Navigator.self) private var navigator
@@ -14,7 +14,6 @@ struct PlayerView: View {
 
     @State private var showAddToPlaylist = false
     @State private var showQueue = false
-    @State private var showLyrics = false
     @State private var showRemoveDownloadConfirmation = false
     @State private var dragOffset: CGFloat = 0
     /// Translation at which the current pull-down was recognised; offsets are
@@ -68,7 +67,9 @@ struct PlayerView: View {
             }
         }
         .sheet(isPresented: $showQueue) { UpNextSheet() }
-        .sheet(isPresented: $showLyrics) { LyricsSheet() }
+        .onChange(of: showQueue || showAddToPlaylist) { _, covered in
+            player.isVideoPlayerVisible = navigator.showPlayer && !covered
+        }
     }
 
     // MARK: - Background
@@ -116,47 +117,13 @@ struct PlayerView: View {
             moreMenu
         }
         .foregroundStyle(Theme.textPrimary)
-        .overlay {
-            if player.current != nil { displayModeToggle }
-        }
-    }
-
-    /// Song / Video switch, drawn as two icons in a capsule.
-    private var displayModeToggle: some View {
-        HStack(spacing: 2) {
-            ForEach(PlayerDisplayMode.allCases, id: \.self) { mode in
-                let selected = navigator.playerDisplayMode == mode
-                Button {
-                    withAnimation(.spring(response: 0.28, dampingFraction: 0.78)) {
-                        navigator.playerDisplayMode = mode
-                        player.setDisplayMode(mode)
-                    }
-                } label: {
-                    Image(systemName: mode == .song ? "headphones" : "play.rectangle")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(selected ? Color.black : Theme.textSecondary)
-                        .frame(width: 42, height: 28)
-                        .background(selected ? Color.white : Color.clear, in: Capsule())
-                }
-                .accessibilityLabel(mode.rawValue)
-                .accessibilityAddTraits(selected ? .isSelected : [])
-            }
-        }
-        .padding(3)
-        .background(Color.white.opacity(0.12), in: Capsule())
     }
 
     private var moreMenu: some View {
         Menu {
             if player.current != nil {
-                Button { player.startMix(); showQueue = true } label: {
-                    Label("Start mix", systemImage: "dot.radiowaves.left.and.right")
-                }
                 Button { showAddToPlaylist = true } label: {
                     Label("Add to playlist", systemImage: "text.badge.plus")
-                }
-                Button { showLyrics = true } label: {
-                    Label("Lyrics", systemImage: "quote.bubble")
                 }
                 if let cur = player.current {
                     if downloadManager.isDownloaded(cur.id) {
@@ -164,12 +131,6 @@ struct PlayerView: View {
                             showRemoveDownloadConfirmation = true
                         } label: {
                             Label("Remove Download", systemImage: "trash")
-                        }
-                    } else {
-                        Button {
-                            downloadManager.startDownload(item: cur)
-                        } label: {
-                            Label("Download Song", systemImage: "arrow.down.circle")
                         }
                     }
                 }
@@ -243,8 +204,8 @@ struct PlayerView: View {
     // MARK: Media
 
     private func media(side: CGFloat, width: CGFloat, step: CGFloat) -> some View {
-        let isVideo = navigator.playerDisplayMode == .video
-        let videoHeight = width * 9 / 16
+        let isVideo = player.current != nil && !player.isNativeAVPlayer
+        let videoHeight = max(200, width * 9 / 16)
 
         return ZStack {
             if let item = player.current {
@@ -276,7 +237,7 @@ struct PlayerView: View {
         // Same height in both modes (the video is centred in the artwork's slot),
         // so switching Song/Video never shifts the title and controls.
         .frame(height: max(side, videoHeight))
-        .animation(.spring(response: 0.32, dampingFraction: 0.82), value: navigator.playerDisplayMode)
+        .animation(.spring(response: 0.32, dampingFraction: 0.82), value: isVideo)
     }
 
     /// Current cover with the previous/next covers parked either side. Swipe left
@@ -441,9 +402,6 @@ struct PlayerView: View {
                     }
                     .accessibilityLabel(isFavourite ? "Remove from Favourites" : "Add to Favourites")
 
-                    Button { showLyrics = true } label: {
-                        ChipLabel(systemName: "quote.bubble", title: "Lyrics")
-                    }
 
                     Button { showAddToPlaylist = true } label: {
                         ChipLabel(systemName: "text.badge.plus", title: "Save")
@@ -472,15 +430,13 @@ struct PlayerView: View {
                         )
                     }
 
-                    if let url = URL(string: "https://music.youtube.com/watch?v=\(current.id)") {
+                    if MediaItem.isYouTubeVideoID(current.id),
+                       let url = URL(string: "https://www.youtube.com/watch?v=\(current.id)") {
                         ShareLink(item: url, subject: Text(current.title)) {
                             ChipLabel(systemName: "arrowshape.turn.up.right", title: "Share")
                         }
                     }
 
-                    Button { player.startMix(); showQueue = true } label: {
-                        ChipLabel(systemName: "dot.radiowaves.left.and.right", title: "Mix")
-                    }
                 }
             }
             .buttonStyle(PressScaleStyle(scale: 0.94))
@@ -493,7 +449,6 @@ struct PlayerView: View {
     private var bottomTabs: some View {
         HStack(spacing: 0) {
             tabButton("UP NEXT") { showQueue = true }
-            tabButton("LYRICS") { showLyrics = true }
         }
         .padding(.horizontal, 24)
         .contentShape(Rectangle())
@@ -591,9 +546,7 @@ struct PlayerView: View {
 
     @ViewBuilder
     private func downloadChip(for item: MediaItem) -> some View {
-        let status = downloadManager.status(for: item.id)
-        switch status {
-        case .downloaded:
+        if downloadManager.isDownloaded(item.id) {
             Button {
                 showRemoveDownloadConfirmation = true
             } label: {
@@ -619,31 +572,6 @@ struct PlayerView: View {
                     Text("Remove \"\(item.title)\" from offline storage?")
                 }
             }
-        case .downloading(let progress):
-            ChipLabel(
-                systemName: "arrow.down.circle",
-                title: "\(max(1, Int(progress * 100)))%",
-                iconColor: Color(hex: "#007AFF")
-            )
-        case .notDownloaded:
-            Button {
-                downloadManager.startDownload(item: item)
-            } label: {
-                ChipLabel(
-                    systemName: "arrow.down.circle",
-                    title: "Download"
-                )
-            }
-        case .failed:
-            Button {
-                downloadManager.startDownload(item: item)
-            } label: {
-                ChipLabel(
-                    systemName: "exclamationmark.arrow.circlepath",
-                    title: "Failed · Retry",
-                    iconColor: Color(hex: "#FF3B30")
-                )
-            }
         }
     }
 
@@ -668,7 +596,7 @@ struct PlayerView: View {
     }
 }
 
-/// Capsule chip in the row under the title (Favourite, Lyrics, Save, Share, Mix).
+/// Capsule chip in the row under the title (Favourite, Save, Share).
 private struct ChipLabel: View {
     let systemName: String
     let title: String

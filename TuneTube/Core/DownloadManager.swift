@@ -3,22 +3,6 @@ import Foundation
 import Observation
 import UIKit
 
-enum DownloadState: Equatable, Sendable {
-    case notDownloaded
-    case downloading(progress: Double)
-    case downloaded
-    case failed(error: String)
-
-    var isDownloading: Bool {
-        if case .downloading = self { return true }
-        return false
-    }
-
-    var isDownloaded: Bool {
-        self == .downloaded
-    }
-}
-
 struct DownloadedTrack: Identifiable, Codable, Hashable, Sendable {
     let id: String
     let title: String
@@ -55,11 +39,16 @@ struct DownloadedTrack: Identifiable, Codable, Hashable, Sendable {
         self.artworkFileName = artworkFileName
     }
 
+    // V1 named its YouTube downloads after the video ID.
+    var isLegacyYouTubeDownload: Bool {
+        MediaItem.isYouTubeVideoID(id) && audioFileName == "\(id).m4a"
+    }
+
     var asMediaItem: MediaItem {
         let artworkURL = DownloadManager.localArtworkURL(for: id)
         return MediaItem(
             id: id,
-            kind: .song,
+            kind: isLegacyYouTubeDownload ? .video : .song,
             title: title,
             subtitle: subtitle,
             thumbnailUrl: artworkURL,
@@ -81,8 +70,6 @@ final class DownloadManager {
     static let shared = DownloadManager()
 
     private(set) var downloadedTracks: [DownloadedTrack] = []
-    private var downloadStates: [String: DownloadState] = [:]
-    private var activeTasks: [String: Task<Void, Never>] = [:]
 
     private nonisolated static let rootDirectory: URL = {
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -124,13 +111,6 @@ final class DownloadManager {
     }
 
     // MARK: - Query Status
-
-    func status(for id: String) -> DownloadState {
-        if let state = downloadStates[id] {
-            return state
-        }
-        return isDownloaded(id) ? .downloaded : .notDownloaded
-    }
 
     func isDownloaded(_ id: String) -> Bool {
         guard downloadedTracks.contains(where: { $0.id == id }) else { return false }
@@ -199,114 +179,9 @@ final class DownloadManager {
         ByteCountFormatter.string(fromByteCount: totalStorageBytes, countStyle: .file)
     }
 
-    // MARK: - Download Execution
-
-    func startDownload(item: MediaItem) {
-        guard !isDownloaded(item.id) else { return }
-        if let current = downloadStates[item.id], current.isDownloading { return }
-
-        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-        downloadStates[item.id] = .downloading(progress: 0.05)
-
-        let task = Task { [weak self] in
-            guard let self else { return }
-            do {
-                try await self.performDownload(for: item)
-                self.downloadStates[item.id] = .downloaded
-                self.activeTasks[item.id] = nil
-                UINotificationFeedbackGenerator().notificationOccurred(.success)
-            } catch {
-                if !Task.isCancelled {
-                    print("[DownloadManager] Download failed for \(item.title): \(error)")
-                    self.downloadStates[item.id] = .failed(error: error.localizedDescription)
-                    self.activeTasks[item.id] = nil
-                    UINotificationFeedbackGenerator().notificationOccurred(.error)
-                }
-            }
-        }
-
-        activeTasks[item.id] = task
-    }
-
-    private func performDownload(for item: MediaItem) async throws {
-        let destAudioURL = Self.audioDirectory.appendingPathComponent("\(item.id).m4a")
-        let destArtworkURL = Self.artworkDirectory.appendingPathComponent("\(item.id).jpg")
-
-        // 1. Audio file acquisition
-        // If StreamResolver has already cached this track, copy it immediately (<0.01s)
-        if let cachedLocalURL = await StreamResolver.shared.getCachedAudioFileURL(for: item.id),
-           let attrs = try? FileManager.default.attributesOfItem(atPath: cachedLocalURL.path),
-           let size = attrs[.size] as? UInt64, size > 100_000 {
-            try? FileManager.default.removeItem(at: destAudioURL)
-            try FileManager.default.copyItem(at: cachedLocalURL, to: destAudioURL)
-            StreamResolver.sanitizeFragmentedMP4(at: destAudioURL)
-            downloadStates[item.id] = .downloading(progress: 0.85)
-        } else {
-            // Resolve stream URL and download with progress
-            downloadStates[item.id] = .downloading(progress: 0.15)
-            let streamURL = try await StreamResolver.shared.resolveStreamURL(for: item.id)
-
-            downloadStates[item.id] = .downloading(progress: 0.35)
-            var request = URLRequest(url: streamURL)
-            // Long tracks (podcasts, mixes, hour+ videos) can be tens of MB and take
-            // well over a minute once YouTube's initial unthrottled burst window ends,
-            // so a short timeout here fails long downloads even though data is still arriving.
-            request.timeoutInterval = 600
-
-            let (tempURL, response) = try await URLSession.shared.download(for: request)
-            guard let httpResponse = response as? HTTPURLResponse,
-                  (httpResponse.statusCode == 200 || httpResponse.statusCode == 206) else {
-                throw URLError(.badServerResponse)
-            }
-
-            try? FileManager.default.removeItem(at: destAudioURL)
-            try FileManager.default.moveItem(at: tempURL, to: destAudioURL)
-            StreamResolver.sanitizeFragmentedMP4(at: destAudioURL)
-            downloadStates[item.id] = .downloading(progress: 0.85)
-        }
-
-        guard let audioAttrs = try? FileManager.default.attributesOfItem(atPath: destAudioURL.path),
-              let audioSize = audioAttrs[.size] as? UInt64, audioSize > 100_000 else {
-            throw URLError(.cannotCreateFile)
-        }
-
-        // 2. Artwork image download
-        var savedArtworkName: String? = nil
-        if let thumbURL = item.effectiveThumbnailUrl {
-            do {
-                let (artData, _) = try await URLSession.shared.data(from: thumbURL)
-                if !artData.isEmpty {
-                    try artData.write(to: destArtworkURL, options: .atomic)
-                    savedArtworkName = "\(item.id).jpg"
-                    if UIImage(data: artData) != nil {
-                        _ = ImageLoader.shared.cached(destArtworkURL) // warmup
-                    }
-                }
-            } catch {
-                print("[DownloadManager] Artwork download failed: \(error)")
-            }
-        }
-
-        downloadStates[item.id] = .downloading(progress: 0.98)
-
-        // 3. Metadata persistence
-        let newTrack = DownloadedTrack(
-            id: item.id,
-            title: item.title,
-            subtitle: item.subtitle,
-            artistName: item.artistName,
-            albumName: item.albumName,
-            durationSeconds: item.durationSeconds,
-            downloadedAt: Date(),
-            fileSizeBytes: Int64(audioSize),
-            audioFileName: "\(item.id).m4a",
-            artworkFileName: savedArtworkName
-        )
-
-        // Remove any existing entry and place fresh track at top
-        downloadedTracks.removeAll { $0.id == item.id }
-        downloadedTracks.insert(newTrack, at: 0)
-        saveMetadata()
+    func importedAudioURL(for id: String) -> URL? {
+        guard let track = track(for: id), !track.isLegacyYouTubeDownload else { return nil }
+        return localAudioURL(for: id)
     }
 
     // MARK: - Import
@@ -332,39 +207,30 @@ final class DownloadManager {
 
     // MARK: - Deletion & Cleanup
 
-    func cancelDownload(for id: String) {
-        activeTasks[id]?.cancel()
-        activeTasks[id] = nil
-        downloadStates[id] = .notDownloaded
-    }
-
     func deleteDownload(for id: String) {
-        cancelDownload(for: id)
-
-        let audioFile = Self.audioDirectory.appendingPathComponent("\(id).m4a")
-        let artworkFile = Self.artworkDirectory.appendingPathComponent("\(id).jpg")
-
-        try? FileManager.default.removeItem(at: audioFile)
-        try? FileManager.default.removeItem(at: artworkFile)
-
+        guard let track = track(for: id) else { return }
+        removeFiles(for: track)
         downloadedTracks.removeAll { $0.id == id }
-        downloadStates[id] = .notDownloaded
         saveMetadata()
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
     }
 
     func deleteAllDownloads() {
         for track in downloadedTracks {
-            cancelDownload(for: track.id)
-            let audioFile = Self.audioDirectory.appendingPathComponent("\(track.id).m4a")
-            let artworkFile = Self.artworkDirectory.appendingPathComponent("\(track.id).jpg")
-            try? FileManager.default.removeItem(at: audioFile)
-            try? FileManager.default.removeItem(at: artworkFile)
-            downloadStates[track.id] = .notDownloaded
+            removeFiles(for: track)
         }
         downloadedTracks.removeAll()
         saveMetadata()
         UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
+    }
+
+    private func removeFiles(for track: DownloadedTrack) {
+        let audio = Self.audioDirectory.appendingPathComponent(track.audioFileName)
+        try? FileManager.default.removeItem(at: audio)
+        if let artworkName = track.artworkFileName {
+            let artwork = Self.artworkDirectory.appendingPathComponent(artworkName)
+            try? FileManager.default.removeItem(at: artwork)
+        }
     }
 
     // MARK: - Persistence
@@ -458,7 +324,7 @@ final class DownloadManager {
                         let id: String
                         if fileName.hasSuffix(".m4a") && fileName.count > 4 {
                             let base = String(fileName.dropLast(4))
-                            id = base.contains(" ") ? "imported_\(abs(fileName.hashValue))" : base
+                            id = (base.contains(" ") || MediaItem.isYouTubeVideoID(base)) ? "imported_\(abs(fileName.hashValue))" : base
                         } else {
                             id = "imported_\(abs(fileName.hashValue))"
                         }

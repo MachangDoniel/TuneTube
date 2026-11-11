@@ -63,7 +63,7 @@ struct MediaItem: Identifiable, Codable, Hashable, Sendable {
 
     private static let youtubeIDPattern = try? NSRegularExpression(pattern: "^[A-Za-z0-9_-]{11}$")
 
-    private static func isYouTubeVideoID(_ id: String) -> Bool {
+    static func isYouTubeVideoID(_ id: String) -> Bool {
         guard let pattern = youtubeIDPattern else { return false }
         let range = NSRange(id.startIndex..<id.endIndex, in: id)
         return pattern.firstMatch(in: id, range: range) != nil

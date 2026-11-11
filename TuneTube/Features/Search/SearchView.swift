@@ -17,8 +17,12 @@ struct SearchView: View {
 
                 searchField
 
-                if model.shelves.isEmpty && !model.isSearching {
-                    browseSection
+                if model.isSearching {
+                    ProgressView().padding(.horizontal, 16)
+                } else if let message = model.errorMessage {
+                    Text(message).foregroundStyle(Theme.textSecondary).padding(.horizontal, 16)
+                } else if model.shelves.isEmpty && model.query.trimmingCharacters(in: .whitespaces).count >= 2 {
+                    Text("No results").foregroundStyle(Theme.textSecondary).padding(.horizontal, 16)
                 } else {
                     ForEach(model.shelves) { shelf in
                         ShelfSection(shelf: shelf) { item in
@@ -36,13 +40,11 @@ struct SearchView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .screenBackground()
         .task {
-            await model.loadConfig()
             consumePendingArtist()
         }
         .onChange(of: navigator.pendingArtistSearch) { _, _ in consumePendingArtist() }
         .onChange(of: settings.localeRevision) { _, _ in
             model.localeDidChange()
-            Task { await model.loadConfig() }
         }
     }
 
@@ -58,7 +60,7 @@ struct SearchView: View {
                 Image(systemName: "magnifyingglass")
                     .foregroundStyle(Theme.textSecondary)
 
-                TextField("Search for songs, albums, or artists...", text: $model.query)
+                TextField("Search YouTube", text: $model.query)
                     .focused($isFocused)
                     .foregroundStyle(Theme.textPrimary)
                     .autocorrectionDisabled()
@@ -102,40 +104,6 @@ struct SearchView: View {
         .animation(.snappy(duration: 0.2), value: !model.query.isEmpty)
     }
 
-    private var browseSection: some View {
-        VStack(alignment: .leading, spacing: 22) {
-            VStack(alignment: .leading, spacing: 10) {
-                SectionLabel("BROWSE BY MOOD")
-                FlowChips(chips: model.config.moodChips) { chip in
-                    model.searchNow(chip.label)
-                }
-            }
-
-            VStack(alignment: .leading, spacing: 0) {
-                SectionLabel("TRENDING SEARCHES").padding(.bottom, 8)
-                ForEach(model.config.trendingSearches) { t in
-                    Button { model.searchNow(t.label) } label: {
-                        HStack(spacing: 12) {
-                            Text(t.emoji)
-                            Text(t.label)
-                                .font(.system(size: 15))
-                                .foregroundStyle(Theme.textPrimary)
-                            Spacer()
-                            Image(systemName: "arrow.up.right")
-                                .font(.system(size: 12))
-                                .foregroundStyle(Theme.textSecondary)
-                        }
-                        .padding(.vertical, 13)
-                        .padding(.horizontal, 14)
-                    }
-                    .buttonStyle(.plain)
-                    Divider().overlay(Color.white.opacity(0.06))
-                }
-            }
-            .background(Theme.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .padding(.horizontal, 16)
-        }
-    }
 }
 
 struct SectionLabel: View {

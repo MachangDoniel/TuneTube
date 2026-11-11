@@ -47,7 +47,7 @@ struct DownloadsView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .screenBackground()
-        .navigationTitle("Downloaded")
+        .navigationTitle("Offline Files")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -132,7 +132,7 @@ struct DownloadsView: View {
                 .foregroundStyle(Theme.textSecondary)
                 .font(.system(size: 14))
 
-            TextField("Filter downloaded songs...", text: $searchQuery)
+            TextField("Filter offline files…", text: $searchQuery)
                 .font(.system(size: 15))
                 .foregroundStyle(Theme.textPrimary)
                 .tint(Theme.accent)
@@ -297,6 +297,12 @@ struct DownloadsView: View {
                             .font(.system(size: 10))
                             .foregroundStyle(Theme.textSecondary.opacity(0.6))
 
+                        if track.isLegacyYouTubeDownload {
+                            Text("Plays on YouTube")
+                                .font(.system(size: 12))
+                                .foregroundStyle(Theme.textSecondary)
+                        }
+
                         Text(track.formattedSize)
                             .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(Theme.textSecondary.opacity(0.8))
@@ -324,11 +330,11 @@ struct DownloadsView: View {
                 .frame(width: 84, height: 84)
                 .background(Theme.surface, in: Circle())
 
-            Text("No Downloads Yet")
+            Text("No Offline Files Yet")
                 .font(.system(size: 20, weight: .bold))
                 .foregroundStyle(Theme.textPrimary)
 
-            Text("Download songs to listen offline anytime\nwithout using cellular data or Wi-Fi.")
+            Text("Import audio or video files to play offline.")
                 .font(.system(size: 14))
                 .foregroundStyle(Theme.textSecondary)
                 .multilineTextAlignment(.center)
